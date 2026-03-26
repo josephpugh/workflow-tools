@@ -1,0 +1,49 @@
+workflow_id: update_client_billing_address
+name: Update Client Billing Address
+description: Update a client's billing address used for statements and invoices.
+domain: client_servicing
+subdomain: profile_maintenance
+entities:
+  - client
+  - address
+  - billing_address
+actions:
+  - update
+qualifiers:
+  - billing
+canonical_intents:
+  - update:client_address:billing
+trigger_utterances:
+  - Update David's billing address
+  - Change where invoices are mailed
+  - Correct the billing address for a client
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    aliases: [customer_name]
+    context_keys: [client_name]
+  - name: street_address
+    type: string
+    required: true
+    description: New billing street address.
+    aliases: [address_line_1]
+  - name: city
+    type: string
+    required: true
+    description: Billing city.
+  - name: state
+    type: string
+    required: true
+    description: Billing state or province.
+  - name: postal_code
+    type: string
+    required: true
+    description: Billing postal code.
+    aliases: [zip_code]
+  - name: effective_date
+    type: date
+    required: true
+    description: Date the billing address should change.
+

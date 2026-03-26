@@ -1,0 +1,37 @@
+workflow_id: open_client_account
+name: Open Client Account
+description: Open a new client investment account.
+domain: client_servicing
+subdomain: account_lifecycle
+entities:
+  - client
+  - account
+actions:
+  - open
+qualifiers:
+  - investment
+canonical_intents:
+  - open:client_account
+trigger_utterances:
+  - Open a new account for a client
+  - Create an investment account
+  - Start a brokerage account
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    context_keys: [client_name]
+  - name: account_type
+    type: string
+    required: true
+    description: Type of account to open.
+  - name: funding_amount
+    type: number
+    required: true
+    description: Initial funding amount.
+  - name: open_date
+    type: date
+    required: true
+    description: Date the account should be opened.
+

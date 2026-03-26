@@ -1,0 +1,32 @@
+workflow_id: escalate_compliance_case
+name: Escalate Compliance Case
+description: Escalate an active compliance case for supervisory review.
+domain: compliance
+subdomain: case_management
+entities:
+  - compliance
+  - case
+actions:
+  - escalate
+qualifiers:
+  - supervisory
+canonical_intents:
+  - escalate:compliance_case
+trigger_utterances:
+  - Escalate a compliance case
+  - Raise this case to compliance leadership
+  - Send the case for review
+input_fields:
+  - name: case_id
+    type: string
+    required: true
+    description: Compliance case identifier.
+  - name: escalation_reason
+    type: string
+    required: true
+    description: Reason for escalation.
+  - name: requested_review_date
+    type: date
+    required: true
+    description: Target review date.
+

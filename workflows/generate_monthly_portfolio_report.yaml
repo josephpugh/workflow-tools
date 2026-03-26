@@ -1,0 +1,34 @@
+workflow_id: generate_monthly_portfolio_report
+name: Generate Monthly Portfolio Report
+description: Generate a monthly portfolio report for a client.
+domain: client_servicing
+subdomain: reporting
+entities:
+  - client
+  - portfolio
+  - report
+actions:
+  - generate
+qualifiers:
+  - monthly
+canonical_intents:
+  - generate:portfolio_report:monthly
+trigger_utterances:
+  - Generate a monthly portfolio report
+  - Produce the monthly client report
+  - Create a portfolio report for last month
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    context_keys: [client_name]
+  - name: report_month
+    type: date
+    required: true
+    description: First day of the month being reported in YYYY-MM-DD format.
+  - name: delivery_channel
+    type: string
+    required: true
+    description: Delivery channel such as portal or email.
+

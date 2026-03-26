@@ -1,0 +1,42 @@
+workflow_id: schedule_vendor_payment
+name: Schedule Vendor Payment
+description: Schedule a vendor payment for a future processing date.
+domain: operations
+subdomain: payments
+entities:
+  - payment
+  - invoice
+  - vendor
+actions:
+  - schedule
+qualifiers:
+  - payable
+canonical_intents:
+  - schedule:vendor_payment
+trigger_utterances:
+  - Schedule a vendor payment
+  - Pay an invoice later
+  - Queue a payment to a supplier
+input_fields:
+  - name: payee_name
+    type: string
+    required: true
+    description: Vendor or supplier receiving the payment.
+    aliases: [vendor_name]
+  - name: amount
+    type: number
+    required: true
+    description: Payment amount.
+  - name: payment_date
+    type: date
+    required: true
+    description: Date the payment should be processed.
+  - name: source_account
+    type: string
+    required: true
+    description: Funding account for the payment.
+  - name: invoice_number
+    type: string
+    required: true
+    description: Invoice or payable reference number.
+

@@ -1,0 +1,25 @@
+workflow_id: lookup_client_profile
+name: Lookup Client Profile
+description: Retrieve the current client profile from the CRM.
+domain: client_servicing
+subdomain: inquiry
+entities:
+  - client
+  - profile
+actions:
+  - lookup
+qualifiers:
+  - crm
+canonical_intents:
+  - lookup:client_profile
+trigger_utterances:
+  - Find a client profile
+  - Show client details
+  - Look up client information
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name to search.
+    context_keys: [client_name]
+

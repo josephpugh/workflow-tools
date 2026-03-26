@@ -1,0 +1,42 @@
+workflow_id: create_wire_transfer
+name: Create Wire Transfer
+description: Initiate an outbound wire transfer for a client.
+domain: operations
+subdomain: payments
+entities:
+  - payment
+  - wire_transfer
+  - account
+actions:
+  - create
+qualifiers:
+  - outbound
+canonical_intents:
+  - create:wire_transfer
+trigger_utterances:
+  - Send a wire transfer
+  - Create an outbound wire
+  - Transfer funds by wire
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    context_keys: [client_name]
+  - name: beneficiary_name
+    type: string
+    required: true
+    description: Beneficiary receiving the wire.
+  - name: amount
+    type: number
+    required: true
+    description: Transfer amount.
+  - name: transfer_date
+    type: date
+    required: true
+    description: Date to send the wire.
+  - name: source_account
+    type: string
+    required: true
+    description: Source account name or number.
+

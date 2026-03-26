@@ -1,0 +1,37 @@
+workflow_id: book_client_meeting
+name: Book Client Meeting
+description: Book a meeting with a client and capture the agenda.
+domain: client_servicing
+subdomain: scheduling
+entities:
+  - client
+  - meeting
+actions:
+  - book
+qualifiers:
+  - advisory
+canonical_intents:
+  - book:client_meeting
+trigger_utterances:
+  - Schedule a client meeting
+  - Book time with a client
+  - Arrange an advisory meeting
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    context_keys: [client_name]
+  - name: meeting_date
+    type: date
+    required: true
+    description: Requested meeting date.
+  - name: meeting_format
+    type: string
+    required: true
+    description: Meeting format such as virtual or in-person.
+  - name: agenda
+    type: string
+    required: true
+    description: Main agenda for the meeting.
+

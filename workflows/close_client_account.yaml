@@ -1,0 +1,37 @@
+workflow_id: close_client_account
+name: Close Client Account
+description: Close an existing client account after confirmation.
+domain: client_servicing
+subdomain: account_lifecycle
+entities:
+  - client
+  - account
+actions:
+  - close
+qualifiers:
+  - investment
+canonical_intents:
+  - close:client_account
+trigger_utterances:
+  - Close a client account
+  - Terminate an account
+  - Shut down an investment account
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    context_keys: [client_name]
+  - name: account_number
+    type: string
+    required: true
+    description: Account number to close.
+  - name: closure_date
+    type: date
+    required: true
+    description: Requested closure date.
+  - name: closure_reason
+    type: string
+    required: true
+    description: Reason for closing the account.
+
