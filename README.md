@@ -4,8 +4,6 @@ FastAPI backend for an AI-powered workflow automation service. The system is bui
 
 In practice, that means this service does not expect users to know workflow IDs, field names, or rigid forms. It takes conversational requests, maps them onto a workflow catalog, asks clarifying questions when multiple workflows are plausible, pulls in any information already present in context, and continues the interaction until it has everything required to run the chosen workflow.
 
-The original article file at [`docs/article.md`](/Users/joepugh/workspace/workflow-tools/docs/article.md) is currently empty in this workspace, so this README reflects the implemented system and the product narrative embodied in the codebase.
-
 ## What this system does
 
 - Accepts natural-language user requests
@@ -303,11 +301,3 @@ Meeting scheduling:
 3. User: `The first option works for me`
 4. API: continues gathering or returns `ready`, depending on what is still missing
 
-## Notes
-
-- This project now exposes both REST and MCP interfaces.
-- The MCP surface is intentionally minimal: `conversation_turn` is the only exposed tool.
-- Workflow execution is represented as an executable contract, not downstream system side effects.
-- Capabilities and validators are optional workflow extensions.
-- The repository currently contains 11 workflow definitions.
-- The current automated test suite passes with `21` tests.
