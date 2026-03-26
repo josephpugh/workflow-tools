@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 FieldType = Literal["string", "number", "date"]
-ConversationStatus = Literal["needs_disambiguation", "needs_inputs", "ready"]
+ConversationStatus = Literal["needs_disambiguation", "needs_inputs", "needs_choice", "ready"]
 
 
 class WorkflowField(BaseModel):
@@ -17,6 +17,15 @@ class WorkflowField(BaseModel):
     description: str
     aliases: list[str] = Field(default_factory=list)
     context_keys: list[str] = Field(default_factory=list)
+
+
+class WorkflowCapability(BaseModel):
+    id: str
+    type: Literal["suggestion", "validation"]
+    provider: str
+    field_names: list[str] = Field(default_factory=list)
+    description: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkflowDefinition(BaseModel):
@@ -31,6 +40,7 @@ class WorkflowDefinition(BaseModel):
     canonical_intents: list[str] = Field(default_factory=list)
     trigger_utterances: list[str] = Field(default_factory=list)
     input_fields: list[WorkflowField] = Field(default_factory=list)
+    capabilities: list[WorkflowCapability] = Field(default_factory=list)
 
     def searchable_text(self) -> str:
         parts = [
@@ -115,6 +125,20 @@ class WorkflowSelectionPlan(BaseModel):
     assistant_message: str | None = None
 
 
+class ChoiceOption(BaseModel):
+    choice_id: str
+    label: str
+    value: dict[str, Any]
+    source: str
+
+
+class ValidationResult(BaseModel):
+    provider: str
+    result: Literal["passed", "failed"]
+    reason: str | None = None
+    field_names: list[str] = Field(default_factory=list)
+
+
 class ConversationState(BaseModel):
     session_id: str
     status: ConversationStatus
@@ -124,6 +148,8 @@ class ConversationState(BaseModel):
     selected_workflow_id: str | None = None
     collected_inputs: dict[str, Any] = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
+    choices: list[ChoiceOption] = Field(default_factory=list)
+    validation_result: ValidationResult | None = None
     assistant_message: str | None = None
     executable_contract: ExecutableContract | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -146,4 +172,6 @@ class TurnResponse(BaseModel):
     requested_fields: list[WorkflowField] = Field(default_factory=list)
     collected_inputs: dict[str, Any] = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
+    choices: list[ChoiceOption] = Field(default_factory=list)
+    validation_result: ValidationResult | None = None
     executable_contract: ExecutableContract | None = None

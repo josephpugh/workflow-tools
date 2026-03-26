@@ -12,8 +12,10 @@ from openai import OpenAI
 from app.core.date_utils import extract_date_expression
 from app.models.domain import (
     AssistantTurnPlan,
+    ChoiceOption,
     IntermediateRequestRepresentation,
     RankedWorkflow,
+    ValidationResult,
     WorkflowDefinition,
     WorkflowSelectionPlan,
 )
@@ -99,6 +101,16 @@ class IntelligenceService(ABC):
         workflow: WorkflowDefinition,
         collected_inputs: dict[str, Any],
         changed_fields: list[str],
+    ) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def build_choice_message(
+        self,
+        workflow: WorkflowDefinition,
+        choices: list[ChoiceOption],
+        collected_inputs: dict[str, Any],
+        validation_result: ValidationResult | None = None,
     ) -> str:
         raise NotImplementedError
 
@@ -335,6 +347,35 @@ Collected inputs:
 
 Changed fields:
 {json.dumps(changed_fields)}
+        """.strip()
+        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
+        return response.output_text.strip()
+
+    def build_choice_message(
+        self,
+        workflow: WorkflowDefinition,
+        choices: list[ChoiceOption],
+        collected_inputs: dict[str, Any],
+        validation_result: ValidationResult | None = None,
+    ) -> str:
+        prompt = f"""
+You are a calm, friendly personal assistant.
+Write one short message presenting the available choices to the user.
+If validation_result indicates failure, acknowledge the issue and then offer the alternatives.
+The message should be concise, professional, and conversational.
+Do not use bullet points.
+
+Workflow:
+{json.dumps(workflow.model_dump(mode="json"))}
+
+Collected inputs:
+{json.dumps(collected_inputs)}
+
+Validation result:
+{json.dumps(validation_result.model_dump(mode="json") if validation_result else None)}
+
+Choices:
+{json.dumps([choice.model_dump(mode="json") for choice in choices])}
 """.strip()
         response = self._client.responses.create(model=self._reasoning_model, input=prompt)
         return response.output_text.strip()
@@ -528,6 +569,26 @@ class HashingIntelligenceService(IntelligenceService):
             "and when it looks right, you can submit it."
         )
 
+    def build_choice_message(
+        self,
+        workflow: WorkflowDefinition,
+        choices: list[ChoiceOption],
+        collected_inputs: dict[str, Any],
+        validation_result: ValidationResult | None = None,
+    ) -> str:
+        labels = [choice.label for choice in choices]
+        if not labels:
+            return "I couldn't find any suitable options just yet."
+        if len(labels) == 1:
+            options_text = labels[0]
+        elif len(labels) == 2:
+            options_text = f"{labels[0]} or {labels[1]}"
+        else:
+            options_text = f"{', '.join(labels[:-1])}, or {labels[-1]}"
+        if validation_result and validation_result.result == "failed":
+            return f"That time is already booked. The closest available options are {options_text}."
+        return f"I found a few available options for you: {options_text}. Let me know which one you prefer."
+
     def _choose_requested_fields(self, workflow: WorkflowDefinition, missing_fields: list[str]) -> list[str]:
         address_fields = [field_name for field_name in ["street_address", "city", "state", "postal_code"] if field_name in missing_fields]
         if address_fields:
@@ -542,7 +603,7 @@ class HashingIntelligenceService(IntelligenceService):
         for field in workflow.input_fields:
             if field.name not in missing_fields:
                 continue
-            if field.type in {"date", "number"} or "name" in field.name:
+            if field.type in {"date", "number"} or "name" in field.name or "time" in field.name:
                 prioritized.append(field.name)
             if len(prioritized) >= 3:
                 return prioritized
@@ -627,14 +688,23 @@ class HashingIntelligenceService(IntelligenceService):
             return extract_date_expression(text)
 
         if field.type == "number":
+            duration_match = re.search(r"\b(\d+)\s*(minutes|minute|mins|min)\b", text, re.IGNORECASE)
+            if duration_match and ("duration" in field_name or "duration" in descriptor):
+                return duration_match.group(1)
             amount_match = re.search(r"\$?(\d[\d,]*(?:\.\d+)?)", text)
             return amount_match.group(1).replace(",", "") if amount_match else None
+
+        if "time" in field_name or ("start" in descriptor and "time" in descriptor):
+            time_match = re.search(r"\b(\d{1,2}:\d{2})\b", text)
+            if time_match:
+                hours, minutes = time_match.group(1).split(":")
+                return f"{int(hours):02d}:{minutes}"
 
         if "delivery" in descriptor or "channel" in descriptor:
             delivery_channel_match = re.search(r"\b(email|portal|print|mail)\b", text, re.IGNORECASE)
             return delivery_channel_match.group(1).lower() if delivery_channel_match else None
 
-        if "meeting_format" in field_name or ("meeting" in descriptor and "format" in descriptor):
+        if field_name == "meeting_format" or ("meeting format" in descriptor):
             format_match = re.search(r"\b(virtual|in-person|in person|phone)\b", text, re.IGNORECASE)
             if format_match:
                 value = format_match.group(1).lower()
@@ -723,12 +793,12 @@ class HashingIntelligenceService(IntelligenceService):
         if "client_name" in existing_inputs:
             return None
         patterns = [
-            r"\b(?:update|open|close|lookup|find|show|generate|book|schedule|create)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
-            r"\bwith\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+            r"(?i:\b(?:update|open|close|lookup|find|show|generate|book|schedule|create)\b)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+            r"(?i:\bfor\b)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
+            r"(?i:\bwith\b)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
         ]
         for pattern in patterns:
-            match = re.search(pattern, full_text, re.IGNORECASE)
+            match = re.search(pattern, full_text)
             if match:
                 return match.group(1).removesuffix("'s").strip()
         return None
@@ -769,6 +839,8 @@ class HashingIntelligenceService(IntelligenceService):
             "payment_date": "the requested payment date",
             "transfer_date": "the requested transfer date",
             "meeting_date": "the preferred meeting date",
+            "meeting_start_time": "the meeting start time in HH:MM format",
+            "duration_minutes": "the meeting duration in minutes",
             "meeting_format": "whether you would like it to be virtual or in person",
             "source_account": "which account should fund it",
         }

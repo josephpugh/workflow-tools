@@ -1,0 +1,56 @@
+workflow_id: setup_client_subscription
+name: Set Up Client Subscription
+description: Set up a new recurring subscription for a client.
+domain: client_servicing
+subdomain: billing
+entities:
+  - client
+  - subscription
+  - billing
+actions:
+  - set_up
+  - create
+qualifiers:
+  - recurring
+canonical_intents:
+  - create:client_subscription
+  - set_up:subscription
+trigger_utterances:
+  - Set up a new subscription for a client
+  - Create a recurring subscription
+  - Start a client subscription plan
+input_fields:
+  - name: client_name
+    type: string
+    required: true
+    description: Full client name.
+    context_keys: [client_name]
+  - name: subscription_plan
+    type: string
+    required: true
+    description: Subscription plan or service tier the client should be enrolled in.
+    aliases: [plan_name, service_tier]
+  - name: billing_type
+    type: string
+    required: true
+    description: Billing type such as monthly, quarterly, annual, recurring, or one-time.
+    aliases: [billing_frequency, billing_cycle]
+  - name: subscription_start_date
+    type: date
+    required: true
+    description: Date the subscription should begin.
+    aliases: [start_date]
+  - name: subscription_amount
+    type: number
+    required: true
+    description: Subscription charge amount.
+    aliases: [amount, price]
+  - name: payment_method
+    type: string
+    required: true
+    description: Payment method to charge, such as card, ACH, or invoice.
+  - name: billing_contact_email
+    type: string
+    required: true
+    description: Email address for billing confirmations and invoices.
+    aliases: [billing_email]

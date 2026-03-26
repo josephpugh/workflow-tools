@@ -51,9 +51,12 @@ def test_orchestrator_resolves_relative_dates_from_reference_day(tmp_path: Path)
     orchestrator = build_orchestrator(tmp_path)
     response = orchestrator.handle_turn(
         TurnRequest(
-            message="Book a client meeting with Alice Johnson next Wednesday",
+            message="Book a client meeting with Alice Johnson next Wednesday at 11:30 for 45 minutes",
         )
     )
+    assert response.status == "needs_inputs"
     assert response.selected_workflow is not None
     assert response.selected_workflow.workflow_id == "book_client_meeting"
     assert response.collected_inputs["meeting_date"] == "2026-04-01"
+    assert response.collected_inputs["meeting_start_time"] == "11:30"
+    assert response.collected_inputs["duration_minutes"] == 45

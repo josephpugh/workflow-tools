@@ -26,6 +26,16 @@ input_fields:
     type: date
     required: true
     description: Requested meeting date.
+  - name: meeting_start_time
+    type: string
+    required: true
+    description: Meeting start time in HH:MM format.
+    aliases: [start_time]
+  - name: duration_minutes
+    type: number
+    required: true
+    description: Meeting duration in minutes.
+    aliases: [duration]
   - name: meeting_format
     type: string
     required: true
@@ -34,4 +44,36 @@ input_fields:
     type: string
     required: true
     description: Main agenda for the meeting.
-
+capabilities:
+  - id: advisor_open_slots
+    type: suggestion
+    provider: demo_calendar.open_slots
+    field_names:
+      - meeting_date
+      - meeting_start_time
+    description: Suggest available meeting slots.
+    config:
+      trigger_when_missing_any:
+        - meeting_start_time
+      max_options: 3
+      default_duration_minutes: 30
+      start_times:
+        - "10:00"
+        - "11:30"
+        - "15:00"
+      unavailable_slots:
+        - date: "2026-04-01"
+          start_time: "14:30"
+  - id: advisor_slot_available
+    type: validation
+    provider: demo_calendar.validate_slot
+    field_names:
+      - meeting_date
+      - meeting_start_time
+      - duration_minutes
+    description: Validate whether the requested meeting slot is available.
+    config:
+      suggestion_capability_id: advisor_open_slots
+      unavailable_slots:
+        - date: "2026-04-01"
+          start_time: "14:30"

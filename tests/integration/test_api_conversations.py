@@ -196,6 +196,91 @@ def test_relative_date_input_is_resolved_using_current_date(client) -> None:
     assert second_payload["executable_contract"]["gathered_inputs"]["effective_date"] == "2026-04-01"
 
 
+def test_meeting_workflow_supports_start_time_and_duration(client) -> None:
+    response = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "message": "Book a client meeting with Alice Johnson next Wednesday at 11:30 for 45 minutes about quarterly planning",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "needs_inputs"
+    assert payload["selected_workflow"]["workflow_id"] == "book_client_meeting"
+    assert payload["collected_inputs"]["meeting_date"] == "2026-04-01"
+    assert payload["collected_inputs"]["meeting_start_time"] == "11:30"
+    assert payload["collected_inputs"]["duration_minutes"] == 45
+    assert payload["collected_inputs"]["client_name"] == "Alice Johnson"
+    assert payload["collected_inputs"]["agenda"] == "Quarterly planning"
+    assert "meeting start time" not in " ".join(payload["missing_fields"])
+    assert "duration_minutes" not in payload["missing_fields"]
+
+
+def test_meeting_workflow_can_suggest_slots(client) -> None:
+    response = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "message": "Book a client meeting with Alice Johnson for 45 minutes virtual about quarterly planning",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "needs_choice"
+    assert payload["selected_workflow"]["workflow_id"] == "book_client_meeting"
+    assert payload["collected_inputs"]["client_name"] == "Alice Johnson"
+    assert payload["collected_inputs"]["duration_minutes"] == 45
+    assert payload["collected_inputs"]["meeting_format"] == "virtual"
+    assert payload["collected_inputs"]["agenda"] == "Quarterly planning"
+    assert len(payload["choices"]) == 3
+    assert payload["choices"][0]["value"]["meeting_start_time"] == "10:00"
+
+
+def test_meeting_workflow_suggests_times_for_known_date(client) -> None:
+    response = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "message": "Help me book a meeting with Dave Smith for next wednesday",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "needs_choice"
+    assert payload["selected_workflow"]["workflow_id"] == "book_client_meeting"
+    assert payload["collected_inputs"]["meeting_date"] == "2026-04-01"
+    assert len(payload["choices"]) == 3
+    assert {choice["value"]["meeting_date"] for choice in payload["choices"]} == {"2026-04-01"}
+    assert payload["choices"][0]["value"]["meeting_start_time"] == "10:00"
+
+
+def test_meeting_workflow_validates_booked_slots_and_offers_alternatives(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "message": "Book a client meeting with Alice Johnson next Wednesday at 14:30 for 45 minutes virtual about quarterly planning",
+        },
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_choice"
+    assert first_payload["selected_workflow"]["workflow_id"] == "book_client_meeting"
+    assert first_payload["validation_result"]["result"] == "failed"
+    assert len(first_payload["choices"]) >= 1
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "The first option works for me",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "ready"
+    assert second_payload["selected_workflow"]["workflow_id"] == "book_client_meeting"
+    assert second_payload["collected_inputs"]["meeting_start_time"] == "10:00"
+    assert second_payload["collected_inputs"]["meeting_date"] == "2026-04-01"
+
+
 def test_ready_session_allows_field_updates(client) -> None:
     first = client.post(
         "/api/v1/conversations/turn",

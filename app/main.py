@@ -11,8 +11,10 @@ from app.core.config import Settings, get_settings
 from app.db.repository import ConversationRepository
 from app.services.intelligence import HashingIntelligenceService, IntelligenceService, OpenAIIntelligenceService
 from app.services.orchestrator import ConversationOrchestrator
+from app.services.providers.registry import ProviderRegistry
 from app.services.retrieval import WorkflowMatcher
 from app.services.workflow_registry import WorkflowRegistry
+from app.services.capability_runner import CapabilityRunner
 
 
 def build_intelligence_service(settings: Settings) -> IntelligenceService:
@@ -35,6 +37,8 @@ def create_app(
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     registry = WorkflowRegistry(workflows_dir or resolved_settings.workflows_dir)
+    provider_registry = ProviderRegistry()
+    provider_registry.validate_workflows(registry.list())
     intelligence = intelligence_service or build_intelligence_service(resolved_settings)
     repository = ConversationRepository(database_url or resolved_settings.database_url)
     matcher = WorkflowMatcher(registry=registry, intelligence=intelligence, settings=resolved_settings)
@@ -43,6 +47,7 @@ def create_app(
         registry=registry,
         intelligence=intelligence,
         matcher=matcher,
+        capability_runner=CapabilityRunner(provider_registry=provider_registry),
         current_date_provider=current_date_provider,
     )
 

@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.core.date_utils import resolve_date_expression
 from app.db.repository import ConversationRepository
 from app.models.domain import (
+    ChoiceOption,
     ConversationEvent,
     ConversationState,
     ExecutableContract,
@@ -14,10 +15,12 @@ from app.models.domain import (
     RankedWorkflow,
     TurnRequest,
     TurnResponse,
+    ValidationResult,
     WorkflowDefinition,
     WorkflowField,
     WorkflowSummary,
 )
+from app.services.capability_runner import CapabilityRunner
 from app.services.intelligence import IntelligenceService
 from app.services.retrieval import WorkflowMatcher
 from app.services.workflow_registry import WorkflowRegistry
@@ -30,12 +33,14 @@ class ConversationOrchestrator:
         registry: WorkflowRegistry,
         intelligence: IntelligenceService,
         matcher: WorkflowMatcher,
+        capability_runner: CapabilityRunner | None = None,
         current_date_provider: Callable[[], date] | None = None,
     ) -> None:
         self._repository = repository
         self._registry = registry
         self._intelligence = intelligence
         self._matcher = matcher
+        self._capability_runner = capability_runner or CapabilityRunner()
         self._current_date_provider = current_date_provider or (lambda: datetime.now().date())
 
     def handle_turn(self, request: TurnRequest) -> TurnResponse:
@@ -148,6 +153,18 @@ class ConversationOrchestrator:
         previous_inputs = dict(state.collected_inputs)
         is_first_prompt_after_selection = not previous_inputs
 
+        selected_choice = self._capability_runner.resolve_choice(state.choices, latest_user_message) if state.choices else None
+        if selected_choice is not None:
+            state.collected_inputs = {**state.collected_inputs, **selected_choice.value}
+            previous_inputs = dict(previous_inputs)
+            changed_fields = [
+                key for key, value in selected_choice.value.items() if previous_inputs.get(key) != value
+            ]
+            state.choices = []
+            state.validation_result = None
+        else:
+            changed_fields = []
+
         gathered = self._prefill_from_context(workflow, context)
         extracted = self._intelligence.extract_inputs(
             workflow=workflow,
@@ -160,7 +177,7 @@ class ConversationOrchestrator:
         )
         normalized = self._coerce_inputs(workflow, {**extracted, **gathered})
         state.collected_inputs = {**state.collected_inputs, **normalized}
-        changed_fields = [key for key, value in normalized.items() if previous_inputs.get(key) != value]
+        changed_fields.extend([key for key, value in normalized.items() if previous_inputs.get(key) != value and key not in changed_fields])
 
         missing_fields = [
             field.name
@@ -168,6 +185,73 @@ class ConversationOrchestrator:
             if field.required and field.name not in state.collected_inputs
         ]
         state.missing_fields = missing_fields
+        reference_date = self._current_date_provider()
+
+        suggestion_result = self._capability_runner.run_suggestions(
+            workflow=workflow,
+            collected_inputs=state.collected_inputs,
+            missing_fields=missing_fields,
+            reference_date=reference_date,
+        )
+        if suggestion_result is not None and suggestion_result.choices:
+            assistant_message = self._intelligence.build_choice_message(
+                workflow=workflow,
+                choices=suggestion_result.choices,
+                collected_inputs=state.collected_inputs,
+            )
+            state.status = "needs_choice"
+            state.choices = suggestion_result.choices
+            state.validation_result = None
+            state.assistant_message = assistant_message
+            state.history.append(ConversationEvent(role="assistant", content=assistant_message))
+            return TurnResponse(
+                session_id=state.session_id,
+                status=state.status,
+                assistant_message=assistant_message,
+                intent=state.intent,
+                candidate_workflows=candidates or [],
+                selected_workflow=WorkflowSummary.from_definition(workflow),
+                collected_inputs=state.collected_inputs,
+                missing_fields=missing_fields,
+                choices=state.choices,
+                validation_result=state.validation_result,
+            )
+
+        validation_execution = self._capability_runner.validate(
+            workflow=workflow,
+            collected_inputs=state.collected_inputs,
+            changed_fields=changed_fields,
+            reference_date=reference_date,
+        )
+        if validation_execution is not None:
+            state.validation_result = validation_execution.validation_result
+            if validation_execution.validation_result and validation_execution.validation_result.result == "failed":
+                state.status = "needs_choice"
+                state.choices = validation_execution.choices
+                assistant_message = self._intelligence.build_choice_message(
+                    workflow=workflow,
+                    choices=validation_execution.choices,
+                    collected_inputs=state.collected_inputs,
+                    validation_result=validation_execution.validation_result,
+                )
+                state.assistant_message = assistant_message
+                state.history.append(ConversationEvent(role="assistant", content=assistant_message))
+                return TurnResponse(
+                    session_id=state.session_id,
+                    status=state.status,
+                    assistant_message=assistant_message,
+                    intent=state.intent,
+                    candidate_workflows=candidates or [],
+                    selected_workflow=WorkflowSummary.from_definition(workflow),
+                    collected_inputs=state.collected_inputs,
+                    missing_fields=missing_fields,
+                    choices=state.choices,
+                    validation_result=state.validation_result,
+                )
+            state.validation_result = validation_execution.validation_result
+        else:
+            state.validation_result = None
+        state.choices = []
 
         if missing_fields:
             plan = self._intelligence.plan_missing_input_turn(
@@ -196,6 +280,8 @@ class ConversationOrchestrator:
                 requested_fields=[field for field in workflow.input_fields if field.name in requested_field_names],
                 collected_inputs=state.collected_inputs,
                 missing_fields=missing_fields,
+                choices=state.choices,
+                validation_result=state.validation_result,
             )
 
         contract = ExecutableContract(
@@ -220,6 +306,8 @@ class ConversationOrchestrator:
             selected_workflow=WorkflowSummary.from_definition(workflow),
             collected_inputs=state.collected_inputs,
             missing_fields=[],
+            choices=state.choices,
+            validation_result=state.validation_result,
             executable_contract=contract,
         )
 
@@ -248,7 +336,7 @@ class ConversationOrchestrator:
 
     def _coerce_value(self, field: WorkflowField, value: Any) -> Any:
         if field.type == "string":
-            return str(value).strip()
+            return self._normalize_string_value(field, str(value).strip())
         if field.type == "number":
             raw = str(value).replace(",", "").replace("$", "").strip()
             try:
@@ -268,3 +356,22 @@ class ConversationOrchestrator:
                 return relative
             return None
         return None
+
+    def _normalize_string_value(self, field: WorkflowField, value: str) -> str:
+        if not value:
+            return value
+        if not self._should_sentence_case(field, value):
+            return value
+        for index, char in enumerate(value):
+            if char.isalpha():
+                return f"{value[:index]}{char.upper()}{value[index + 1:]}"
+        return value
+
+    def _should_sentence_case(self, field: WorkflowField, value: str) -> bool:
+        descriptor = " ".join([field.name, field.description, *field.aliases]).lower()
+        if not any(keyword in descriptor for keyword in {"agenda", "subject", "summary", "reason", "description", "notes"}):
+            return False
+        letters = [char for char in value if char.isalpha()]
+        if not letters:
+            return False
+        return value == value.lower()
