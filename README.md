@@ -29,7 +29,8 @@ The service turns natural-language requests into a structured Intermediate Reque
   - conversational input extraction
   - natural-language assistant responses for disambiguation, input collection, and ready/update states
 - Deterministic local fallback intelligence service for offline development and tests
-- Full unit and integration test coverage with 10 representative workflows
+- Full unit and integration test coverage with 11 representative workflows
+- Terminal logging for request flow, workflow matching, selection, capabilities, and state transitions
 
 ## Project layout
 
@@ -40,7 +41,7 @@ app/
   db/              SQLite repository
   models/          Pydantic models
   services/        workflow registry, retrieval, orchestration, intelligence
-workflows/         10 representative YAML workflow definitions
+workflows/         11 representative YAML workflow definitions
 tests/             unit and integration tests
 docs/article.md    original product article
 ```
@@ -106,6 +107,7 @@ export OPENAI_API_KEY=...
 export OPENAI_REASONING_MODEL=gpt-4.1-mini
 export OPENAI_EXTRACTION_MODEL=gpt-4.1-mini
 export OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+export LOG_LEVEL=INFO
 ```
 
 If `OPENAI_API_KEY` is not set, the app falls back to a deterministic local intelligence service. That fallback is generic and schema-driven, but it exists mainly for tests and local development rather than production-quality conversation handling.
@@ -136,6 +138,7 @@ uvicorn app.main:app --reload
 ```
 
 The server starts on `http://127.0.0.1:8000`.
+You will also see application logs in the terminal. Set `LOG_LEVEL=DEBUG` for more detail.
 
 ## Run tests
 
@@ -160,4 +163,4 @@ pytest
 - This implementation intentionally stops at API-enabled backend services. It does not create MCP wrappers.
 - The workflow execution layer is represented as an executable contract, not downstream system side effects.
 - Date, string, and number field types are supported as requested.
-- The current test suite passes with `11` tests.
+- The current test suite passes with `19` tests.

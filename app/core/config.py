@@ -9,6 +9,7 @@ from pathlib import Path
 class Settings:
     app_name: str = "Workflow Automation API"
     api_prefix: str = "/api/v1"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
     openai_reasoning_model: str = os.getenv("OPENAI_REASONING_MODEL", "gpt-5.2")
     openai_extraction_model: str = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5.2")
@@ -22,4 +23,3 @@ class Settings:
 
 def get_settings() -> Settings:
     return Settings()
-

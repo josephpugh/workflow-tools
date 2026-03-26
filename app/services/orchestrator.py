@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+import logging
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -25,6 +26,8 @@ from app.services.intelligence import IntelligenceService
 from app.services.retrieval import WorkflowMatcher
 from app.services.workflow_registry import WorkflowRegistry
 
+logger = logging.getLogger(__name__)
+
 
 class ConversationOrchestrator:
     def __init__(
@@ -47,6 +50,9 @@ class ConversationOrchestrator:
         state = self._repository.load(request.session_id) if request.session_id else None
         if state is None:
             state = ConversationState(session_id=str(uuid4()), status="needs_inputs")
+            logger.info("Starting new conversation session_id=%s", state.session_id)
+        else:
+            logger.info("Continuing conversation session_id=%s status=%s", state.session_id, state.status)
         state.history.append(ConversationEvent(role="user", content=request.message))
         state.updated_at = datetime.now(UTC)
 
@@ -66,6 +72,14 @@ class ConversationOrchestrator:
     def _start_matching(self, state: ConversationState, request: TurnRequest) -> TurnResponse:
         intent = self._intelligence.classify_intent(request.message, request.context, self._registry.list())
         state.intent = intent
+        logger.info(
+            "Intent classified session_id=%s action=%s domain=%s entities=%s qualifiers=%s",
+            state.session_id,
+            intent.action,
+            intent.domain,
+            intent.entities,
+            intent.qualifiers,
+        )
         candidates = self._matcher.match(intent)
         state.candidate_workflow_ids = [candidate.workflow.workflow_id for candidate in candidates]
         selection = self._intelligence.plan_workflow_selection(
@@ -73,11 +87,17 @@ class ConversationOrchestrator:
             history=[{"role": item.role, "content": item.content} for item in state.history],
         )
         if selection.selected_workflow_id:
+            logger.info("Workflow auto-selected session_id=%s workflow=%s", state.session_id, selection.selected_workflow_id)
             state.selected_workflow_id = selection.selected_workflow_id
             state.candidate_workflow_ids = []
             return self._continue_input_collection(state, request.message, request.context, candidates=candidates)
 
         top_candidates = candidates[:3]
+        logger.info(
+            "Workflow disambiguation required session_id=%s candidates=%s",
+            state.session_id,
+            [candidate.workflow.workflow_id for candidate in top_candidates],
+        )
         assistant_message = selection.assistant_message or self._intelligence.build_disambiguation_message(
             top_candidates,
             [{"role": item.role, "content": item.content} for item in state.history],
@@ -120,10 +140,16 @@ class ConversationOrchestrator:
             history=[{"role": item.role, "content": item.content} for item in state.history],
         )
         if selection.selected_workflow_id:
+            logger.info("Workflow selected after disambiguation session_id=%s workflow=%s", state.session_id, selection.selected_workflow_id)
             state.selected_workflow_id = selection.selected_workflow_id
             state.candidate_workflow_ids = []
             return self._continue_input_collection(state, request.message, request.context, candidates=candidates)
 
+        logger.info(
+            "Disambiguation still unresolved session_id=%s candidates=%s",
+            state.session_id,
+            [candidate.workflow.workflow_id for candidate in candidates[:3]],
+        )
         assistant_message = selection.assistant_message or self._intelligence.build_disambiguation_message(
             candidates[:3],
             [{"role": item.role, "content": item.content} for item in state.history],
@@ -152,9 +178,11 @@ class ConversationOrchestrator:
         state.selected_workflow_id = workflow.workflow_id
         previous_inputs = dict(state.collected_inputs)
         is_first_prompt_after_selection = not previous_inputs
+        logger.info("Collecting inputs session_id=%s workflow=%s", state.session_id, workflow.workflow_id)
 
         selected_choice = self._capability_runner.resolve_choice(state.choices, latest_user_message) if state.choices else None
         if selected_choice is not None:
+            logger.info("Resolved user choice session_id=%s workflow=%s choice_id=%s", state.session_id, workflow.workflow_id, selected_choice.choice_id)
             state.collected_inputs = {**state.collected_inputs, **selected_choice.value}
             previous_inputs = dict(previous_inputs)
             changed_fields = [
@@ -178,6 +206,17 @@ class ConversationOrchestrator:
         normalized = self._coerce_inputs(workflow, {**extracted, **gathered})
         state.collected_inputs = {**state.collected_inputs, **normalized}
         changed_fields.extend([key for key, value in normalized.items() if previous_inputs.get(key) != value and key not in changed_fields])
+        logger.info(
+            "Updated collected inputs session_id=%s workflow=%s changed_fields=%s missing_fields=%s",
+            state.session_id,
+            workflow.workflow_id,
+            changed_fields,
+            [
+                field.name
+                for field in workflow.input_fields
+                if field.required and field.name not in state.collected_inputs
+            ],
+        )
 
         missing_fields = [
             field.name
@@ -194,6 +233,7 @@ class ConversationOrchestrator:
             reference_date=reference_date,
         )
         if suggestion_result is not None and suggestion_result.choices:
+            logger.info("Returning needs_choice from suggestion session_id=%s workflow=%s", state.session_id, workflow.workflow_id)
             assistant_message = self._intelligence.build_choice_message(
                 workflow=workflow,
                 choices=suggestion_result.choices,
@@ -226,6 +266,7 @@ class ConversationOrchestrator:
         if validation_execution is not None:
             state.validation_result = validation_execution.validation_result
             if validation_execution.validation_result and validation_execution.validation_result.result == "failed":
+                logger.info("Returning needs_choice from validation failure session_id=%s workflow=%s", state.session_id, workflow.workflow_id)
                 state.status = "needs_choice"
                 state.choices = validation_execution.choices
                 assistant_message = self._intelligence.build_choice_message(
@@ -254,6 +295,7 @@ class ConversationOrchestrator:
         state.choices = []
 
         if missing_fields:
+            logger.info("Returning needs_inputs session_id=%s workflow=%s missing_fields=%s", state.session_id, workflow.workflow_id, missing_fields)
             plan = self._intelligence.plan_missing_input_turn(
                 workflow,
                 history=[{"role": item.role, "content": item.content} for item in state.history],
@@ -289,6 +331,7 @@ class ConversationOrchestrator:
             gathered_inputs=state.collected_inputs,
             explanation=f"Run {workflow.name} with the gathered inputs below.",
         )
+        logger.info("Workflow ready session_id=%s workflow=%s", state.session_id, workflow.workflow_id)
         state.status = "ready"
         state.assistant_message = self._intelligence.build_ready_message(
             workflow=workflow,

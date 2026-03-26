@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections import Counter, defaultdict
@@ -8,6 +9,8 @@ from app.core.config import Settings
 from app.models.domain import IntermediateRequestRepresentation, RankedWorkflow, WorkflowDefinition, WorkflowSummary
 from app.services.intelligence import IntelligenceService
 from app.services.workflow_registry import WorkflowRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -90,6 +93,8 @@ class WorkflowMatcher:
         restrict_to: set[str] | None = None,
     ) -> list[RankedWorkflow]:
         query_text = self._intent_to_query(intent)
+        logger.info("Matching workflows for action=%s domain=%s entities=%s", intent.action, intent.domain, intent.entities)
+        logger.debug("Matcher query text: %s", query_text)
         query_embedding = self._intelligence.embed_texts([query_text])[0]
 
         semantic_raw = {
@@ -163,6 +168,17 @@ class WorkflowMatcher:
             )
 
         candidates.sort(key=lambda item: (item.rrf_score, item.confidence), reverse=True)
+        logger.info(
+            "Top workflow candidates: %s",
+            [
+                {
+                    "workflow_id": candidate.workflow.workflow_id,
+                    "confidence": candidate.confidence,
+                    "rrf_score": round(candidate.rrf_score, 4),
+                }
+                for candidate in candidates[: min(top_k, 3)]
+            ],
+        )
         return candidates[:top_k]
 
     def should_auto_select(self, candidates: list[RankedWorkflow]) -> bool:
@@ -213,4 +229,3 @@ class WorkflowMatcher:
             shared_qualifiers = len(set(intent.qualifiers).intersection(workflow.qualifiers))
             score += 2.0 * (shared_qualifiers / len(set(intent.qualifiers)))
         return score
-

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
 from app.models.domain import ConversationState
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationRepository:
@@ -34,6 +37,7 @@ class ConversationRepository:
                 )
                 """
             )
+        logger.debug("Conversation repository initialized at %s", self._database_path)
 
     def load(self, session_id: str) -> ConversationState | None:
         with self._connect() as connection:
@@ -42,7 +46,9 @@ class ConversationRepository:
                 (session_id,),
             ).fetchone()
         if row is None:
+            logger.debug("Conversation state not found for session_id=%s", session_id)
             return None
+        logger.debug("Conversation state loaded for session_id=%s", session_id)
         return ConversationState.model_validate_json(row["payload"])
 
     def save(self, state: ConversationState) -> None:
@@ -56,4 +62,4 @@ class ConversationRepository:
                 """,
                 (state.session_id, payload),
             )
-
+        logger.debug("Conversation state saved for session_id=%s status=%s", state.session_id, state.status)
