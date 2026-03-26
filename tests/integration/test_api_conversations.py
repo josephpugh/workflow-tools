@@ -173,6 +173,29 @@ def test_end_to_end_context_prefill_and_batch_follow_up(client) -> None:
     }
 
 
+def test_relative_date_input_is_resolved_using_current_date(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "Update Dave Smith's client mailing address to Chapel Hill, NC, 27517"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_inputs"
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "The street address is 117 Hayworth Drive and it should take effect next Wednesday",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "ready"
+    assert second_payload["collected_inputs"]["effective_date"] == "2026-04-01"
+    assert second_payload["executable_contract"]["gathered_inputs"]["effective_date"] == "2026-04-01"
+
+
 def test_ready_session_allows_field_updates(client) -> None:
     first = client.post(
         "/api/v1/conversations/turn",

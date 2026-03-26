@@ -4,10 +4,12 @@ import json
 import math
 import re
 from abc import ABC, abstractmethod
+from datetime import date
 from typing import Any
 
 from openai import OpenAI
 
+from app.core.date_utils import extract_date_expression
 from app.models.domain import (
     AssistantTurnPlan,
     IntermediateRequestRepresentation,
@@ -54,6 +56,7 @@ class IntelligenceService(ABC):
         history: list[dict[str, str]],
         latest_user_message: str,
         use_full_history: bool,
+        current_date: date,
         context: dict[str, Any],
         existing_inputs: dict[str, Any],
     ) -> dict[str, Any]:
@@ -153,6 +156,7 @@ User request: {text}
         history: list[dict[str, str]],
         latest_user_message: str,
         use_full_history: bool,
+        current_date: date,
         context: dict[str, Any],
         existing_inputs: dict[str, Any],
     ) -> dict[str, Any]:
@@ -181,6 +185,9 @@ Latest user message:
 
 Use full history for extraction:
 {json.dumps(use_full_history)}
+
+Current date:
+{current_date.isoformat()}
 
 Context:
 {json.dumps(context)}
@@ -405,6 +412,7 @@ class HashingIntelligenceService(IntelligenceService):
         history: list[dict[str, str]],
         latest_user_message: str,
         use_full_history: bool,
+        current_date: date,
         context: dict[str, Any],
         existing_inputs: dict[str, Any],
     ) -> dict[str, Any]:
@@ -616,8 +624,7 @@ class HashingIntelligenceService(IntelligenceService):
                 report_month_match = re.search(r"\b(20\d{2}-\d{2})\b", text)
                 if report_month_match:
                     return f"{report_month_match.group(1)}-01"
-            date_match = re.search(r"\b(\d{4}-\d{2}-\d{2}|[A-Za-z]+\s+\d{1,2},\s*\d{4})\b", text)
-            return date_match.group(1) if date_match else None
+            return extract_date_expression(text)
 
         if field.type == "number":
             amount_match = re.search(r"\$?(\d[\d,]*(?:\.\d+)?)", text)

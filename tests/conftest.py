@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,7 @@ def client(settings: Settings) -> TestClient:
         intelligence_service=HashingIntelligenceService(),
         workflows_dir=settings.workflows_dir,
         database_url=settings.database_url,
+        current_date_provider=lambda: date(2026, 3, 26),
     )
     with TestClient(app) as test_client:
         yield test_client
-

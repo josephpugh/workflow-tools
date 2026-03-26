@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
+from typing import Callable
 
 from fastapi import FastAPI
 
@@ -29,6 +31,7 @@ def create_app(
     intelligence_service: IntelligenceService | None = None,
     workflows_dir: Path | None = None,
     database_url: str | None = None,
+    current_date_provider: Callable[[], date] | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     registry = WorkflowRegistry(workflows_dir or resolved_settings.workflows_dir)
@@ -40,6 +43,7 @@ def create_app(
         registry=registry,
         intelligence=intelligence,
         matcher=matcher,
+        current_date_provider=current_date_provider,
     )
 
     app = FastAPI(title=resolved_settings.app_name)

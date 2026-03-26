@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Any, Callable
 from uuid import uuid4
 
+from app.core.date_utils import resolve_date_expression
 from app.db.repository import ConversationRepository
 from app.models.domain import (
     ConversationEvent,
@@ -29,11 +30,13 @@ class ConversationOrchestrator:
         registry: WorkflowRegistry,
         intelligence: IntelligenceService,
         matcher: WorkflowMatcher,
+        current_date_provider: Callable[[], date] | None = None,
     ) -> None:
         self._repository = repository
         self._registry = registry
         self._intelligence = intelligence
         self._matcher = matcher
+        self._current_date_provider = current_date_provider or (lambda: datetime.now().date())
 
     def handle_turn(self, request: TurnRequest) -> TurnResponse:
         state = self._repository.load(request.session_id) if request.session_id else None
@@ -151,6 +154,7 @@ class ConversationOrchestrator:
             history=[{"role": item.role, "content": item.content} for item in state.history],
             latest_user_message=latest_user_message,
             use_full_history=is_first_prompt_after_selection,
+            current_date=self._current_date_provider(),
             context=context,
             existing_inputs={**state.collected_inputs, **gathered},
         )
@@ -259,5 +263,8 @@ class ConversationOrchestrator:
                     return datetime.strptime(text, fmt).date().isoformat()
                 except ValueError:
                     continue
+            relative = resolve_date_expression(text, self._current_date_provider())
+            if relative is not None:
+                return relative
             return None
         return None
