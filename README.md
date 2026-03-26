@@ -1,53 +1,132 @@
 # Workflow Automation Backend
 
-FastAPI backend for an AI-powered workflow automation service that implements the architecture described in [`docs/article.md`](/Users/joepugh/workspace/workflow-tools/docs/article.md).
+FastAPI backend for an AI-powered workflow automation service. The system is built around a simple product idea: users should be able to say what they want in natural language, and the backend should figure out which workflow fits, gather the remaining information in a polished way, and stop only when it has a complete, executable contract.
 
-The service turns natural-language requests into a structured Intermediate Request Representation (IRR), matches that IRR against a metadata-rich workflow catalog, disambiguates when multiple workflows are plausible, gathers required inputs in a white-glove conversational flow, and returns an executable contract once all required inputs are available.
+In practice, that means this service does not expect users to know workflow IDs, field names, or rigid forms. It takes conversational requests, maps them onto a workflow catalog, asks clarifying questions when multiple workflows are plausible, pulls in any information already present in context, and continues the interaction until it has everything required to run the chosen workflow.
 
-## What is implemented
+The original article file at [`docs/article.md`](/Users/joepugh/workspace/workflow-tools/docs/article.md) is currently empty in this workspace, so this README reflects the implemented system and the product narrative embodied in the codebase.
 
-- FastAPI API layer for workflow interaction, session retrieval, workflow discovery, and health checks
-- MCP server exposing a single `conversation_turn` tool over Streamable HTTP
-- Workflow Metadata Representation (WMR) catalog stored as YAML
-- Hybrid retrieval engine with:
-  - semantic search using embeddings
+## What this system does
+
+- Accepts natural-language user requests
+- Converts them into an Intermediate Request Representation (IRR)
+- Matches that IRR against a metadata-rich YAML workflow catalog
+- Selects a workflow or asks a disambiguating question when needed
+- Extracts inputs from the conversation and from explicit context
+- Requests missing information in a calm, assistant-like tone
+- Keeps `ready` sessions editable so users can revise inputs later
+- Returns an executable contract once all required inputs are gathered
+- Exposes the same functionality through both REST and MCP
+
+## Current implementation
+
+- FastAPI API layer for conversation turns, workflow discovery, health checks, and persisted session lookup
+- Official MCP server using the Python MCP SDK, with one exposed tool: `conversation_turn`
+- Workflow catalog stored as YAML definitions
+- Hybrid workflow retrieval using:
+  - semantic matching with embeddings
   - BM25-style fuzzy retrieval
-  - deterministic entity/domain/action/qualifier matching
-  - Reciprocal Rank Fusion (RRF) to combine the rankings
-- Conversation orchestration with:
-  - intent classification into IRR
-  - candidate retrieval via RRF
-  - AI-driven workflow selection or disambiguation
-  - AI-driven conversational planning for missing input turns
-  - context-based prefilling
-  - post-`ready` input updates such as `change effective date to ...`
-  - executable contract generation
+  - deterministic metadata overlap on action, domain, entity, and qualifier
+  - Reciprocal Rank Fusion (RRF)
+- AI-driven orchestration for:
+  - intent classification
+  - workflow selection vs disambiguation
+  - input extraction
+  - conversational missing-input planning
+  - natural-language response generation
+- Optional capability / validator extensions for workflows
+- Demonstration capability providers for meeting scheduling:
+  - suggest open slots
+  - validate requested slots
+  - offer alternatives when a slot is unavailable
 - SQLite-backed conversation persistence
-- OpenAI integration for:
+- Terminal logging for request flow, matching, selection, capability execution, and state transitions
+- Deterministic fallback intelligence service for offline development and tests
+
+## Workflow model
+
+The backend is centered on workflow definitions, not hardcoded UI forms. Each workflow defines:
+
+- business metadata such as domain, entities, actions, and qualifiers
+- required input fields with type, description, aliases, and optional context keys
+- optional runtime capabilities such as suggestions or validations
+
+Supported field types:
+
+- `string`
+- `number`
+- `date`
+
+Optional capability extensions are declarative in YAML and resolved in backend code through a provider registry. Workflows that do not declare capabilities still work normally.
+
+## Included workflows
+
+The repository currently includes 11 representative workflows:
+
+- `book_client_meeting`
+- `close_client_account`
+- `create_wire_transfer`
+- `escalate_compliance_case`
+- `generate_monthly_portfolio_report`
+- `lookup_client_profile`
+- `open_client_account`
+- `schedule_vendor_payment`
+- `setup_client_subscription`
+- `update_client_billing_address`
+- `update_client_mailing_address`
+
+## Conversation lifecycle
+
+Primary conversation states:
+
+- `needs_disambiguation`
+- `needs_inputs`
+- `needs_choice`
+- `ready`
+
+Typical flow:
+
+1. User describes an outcome in natural language.
+2. The backend classifies intent and retrieves candidate workflows.
+3. If one workflow is clearly best, it is selected. Otherwise the backend asks a clarifying question.
+4. The backend extracts known inputs from the request and any provided context.
+5. Missing information is requested in grouped, natural prompts.
+6. Optional validators or suggestion capabilities may run.
+7. Once everything required is available, the backend returns an executable contract.
+8. If the user later says something like `change effective date to 2026-05-15`, the same session can remain `ready` while updating the gathered inputs and contract.
+
+## Architecture
+
+Runtime responsibilities are split cleanly:
+
+- `WorkflowRegistry`
+  Loads and validates workflow YAML files.
+
+- `WorkflowMatcher`
+  Handles retrieval and ranking only.
+
+- `ConversationOrchestrator`
+  Manages session state, persistence, coercion, capability execution, and response assembly.
+
+- `OpenAIIntelligenceService`
+  Handles LLM-driven reasoning:
   - IRR generation
-  - semantic embeddings
-  - workflow selection vs clarification planning
-  - conversational input extraction
-  - natural-language assistant responses for disambiguation, input collection, and ready/update states
-- Deterministic local fallback intelligence service for offline development and tests
-- Full unit and integration test coverage with 11 representative workflows
-- Terminal logging for request flow, workflow matching, selection, capabilities, and state transitions
+  - workflow selection planning
+  - disambiguation wording
+  - input extraction
+  - missing-input planning
+  - choice phrasing
+  - ready/update response wording
 
-## Project layout
+- `CapabilityRunner`
+  Executes optional workflow capabilities through providers.
 
-```text
-app/
-  api/             FastAPI routes
-  core/            settings
-  db/              SQLite repository
-  models/          Pydantic models
-  services/        workflow registry, retrieval, orchestration, intelligence
-workflows/         11 representative YAML workflow definitions
-tests/             unit and integration tests
-docs/article.md    original product article
-```
+- Provider registry
+  Maps declarative capability names in YAML onto backend implementations.
 
-## API surface
+This split keeps retrieval explainable, orchestration deterministic, and conversational reasoning prompt-driven rather than buried in per-workflow application code.
+
+## REST API
 
 ### `POST /api/v1/conversations/turn`
 
@@ -65,18 +144,23 @@ Request:
 }
 ```
 
-Possible response states:
+Response includes:
 
-- `needs_disambiguation`
-- `needs_inputs`
-- `ready`
-
-When the response reaches `ready`, the payload includes an `executable_contract` with the selected workflow and gathered inputs.
-If the user sends a later update such as `change effective date to 2026-05-15`, the same session can stay in `ready` while revising the gathered inputs and contract.
+- `session_id`
+- `status`
+- `assistant_message`
+- `intent`
+- candidate workflows when relevant
+- selected workflow when relevant
+- collected inputs
+- missing fields
+- optional choices
+- optional validation result
+- executable contract when `status` is `ready`
 
 ### `GET /api/v1/conversations/{session_id}`
 
-Returns the persisted conversation state for auditing and debugging.
+Returns the persisted conversation state.
 
 ### `GET /api/v1/workflows`
 
@@ -90,90 +174,31 @@ Returns one workflow summary.
 
 Health check.
 
-## OpenAI configuration
+## MCP server
 
-The production service uses OpenAI for:
+The application also mounts an MCP server at:
 
-- IRR generation
-- semantic embeddings
-- workflow selection vs disambiguation
-- workflow input extraction from conversation history
-- conversational planning for what to ask next
-- assistant response generation
+`/mcp`
 
-Environment variables:
+It uses the official Python MCP SDK package:
 
-```bash
-export OPENAI_API_KEY=...
-export OPENAI_REASONING_MODEL=gpt-4.1-mini
-export OPENAI_EXTRACTION_MODEL=gpt-4.1-mini
-export OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-export LOG_LEVEL=INFO
-```
+- `mcp`
 
-If `OPENAI_API_KEY` is not set, the app falls back to a deterministic local intelligence service. That fallback is generic and schema-driven, but it exists mainly for tests and local development rather than production-quality conversation handling.
-
-## Architecture notes
-
-The current runtime split is:
-
-- `WorkflowMatcher` handles retrieval and ranking only
-- `ConversationOrchestrator` handles session state, persistence, coercion, and API response assembly
-- `OpenAIIntelligenceService` handles:
-  - intent classification
-  - workflow selection planning
-  - disambiguation wording
-  - input extraction
-  - missing-input turn planning
-  - ready/update response wording
-
-This keeps retrieval explainable while moving conversational reasoning into prompts instead of hardcoded per-workflow branches.
-
-## Run locally
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn app.main:app --reload
-```
-
-The server starts on `http://127.0.0.1:8000`.
-You will also see application logs in the terminal. Set `LOG_LEVEL=DEBUG` for more detail.
-
-## Run tests
-
-```bash
-source .venv/bin/activate
-pytest
-```
-
-## Example interaction
-
-1. User: `Update David's address`
-2. API: `needs_disambiguation` with mailing and billing address candidates
-3. User: `Use the mailing address workflow`
-4. API: `needs_inputs` and acknowledges any inputs it already inferred before asking for the remaining details
-5. User: `Use 22 Broad St, Boston, MA 02110 effective April 1, 2026`
-6. API: `ready` with the workflow and gathered inputs
-7. User: `Change effective date to 2026-05-15`
-8. API: `ready` again with an updated executable contract
-
-## MCP tool
-
-The application also mounts an MCP server at `/mcp` using the official Python MCP SDK (`mcp`).
-
-Exposed tool:
+Only one tool is exposed:
 
 - `conversation_turn`
 
 Tool behavior:
 
-- accepts `message`, optional `session_id`, and optional `context`
-- delegates to the same backend conversation orchestration used by `POST /api/v1/conversations/turn`
-- returns the full structured turn response, including disambiguation candidates, missing inputs, choices, validation state, and executable contract
+- accepts `message`
+- accepts optional `session_id`
+- accepts optional `context`
+- delegates to the same orchestration path as `POST /api/v1/conversations/turn`
+- returns the same structured turn result
 
-Example client connection:
+This makes the MCP surface intentionally narrow: a client only needs one tool to drive the full conversation lifecycle.
+
+Example client usage:
 
 ```python
 import asyncio
@@ -189,7 +214,7 @@ async def main():
             result = await session.call_tool(
                 "conversation_turn",
                 {
-                    "message": "Update Dave Smith's mailing address to 117 Hayworth Drive",
+                    "message": "Update Dave Smith's mailing address to 117 Hayworth Drive"
                 },
             )
             print(result)
@@ -198,9 +223,91 @@ async def main():
 asyncio.run(main())
 ```
 
+## OpenAI usage
+
+When `OPENAI_API_KEY` is present, the production path uses OpenAI for:
+
+- intent classification into IRR
+- semantic embeddings for workflow matching
+- workflow selection vs clarification planning
+- workflow input extraction
+- missing-input turn planning
+- conversational assistant responses
+
+Environment variables:
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_REASONING_MODEL=gpt-5.2
+export OPENAI_EXTRACTION_MODEL=gpt-5.2
+export OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+export LOG_LEVEL=INFO
+```
+
+If `OPENAI_API_KEY` is not set, the app falls back to a deterministic local intelligence service. That fallback exists mainly for tests and offline development; the intended production experience is the OpenAI-backed path.
+
+## Logging
+
+The application now logs key runtime events to the terminal, including:
+
+- incoming conversation turn requests
+- session creation / continuation
+- intent classification
+- workflow matching and top candidates
+- auto-selection vs disambiguation
+- input updates and missing fields
+- capability execution
+- final conversation status
+
+For more detail:
+
+```bash
+LOG_LEVEL=DEBUG uvicorn app.main:app --reload
+```
+
+## Run locally
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn app.main:app --reload
+```
+
+The server starts on `http://127.0.0.1:8000`.
+
+## Run tests
+
+```bash
+source .venv/bin/activate
+pytest
+```
+
+## Example interactions
+
+Address update:
+
+1. User: `Update David's address`
+2. API: `needs_disambiguation` with mailing and billing address candidates
+3. User: `Use the mailing address workflow`
+4. API: `needs_inputs` and acknowledges any details it already inferred
+5. User: `Use 22 Broad St, Boston, MA 02110 effective April 1, 2026`
+6. API: `ready` with the executable contract
+7. User: `Change effective date to 2026-05-15`
+8. API: `ready` again with an updated contract
+
+Meeting scheduling:
+
+1. User: `Help me book a meeting with Dave Smith for next Wednesday`
+2. API: `needs_choice` with suggested meeting times for that date
+3. User: `The first option works for me`
+4. API: continues gathering or returns `ready`, depending on what is still missing
+
 ## Notes
 
-- This implementation intentionally stops at API-enabled backend services. It does not create MCP wrappers.
-- The workflow execution layer is represented as an executable contract, not downstream system side effects.
-- Date, string, and number field types are supported as requested.
-- The current test suite passes with `19` tests.
+- This project now exposes both REST and MCP interfaces.
+- The MCP surface is intentionally minimal: `conversation_turn` is the only exposed tool.
+- Workflow execution is represented as an executable contract, not downstream system side effects.
+- Capabilities and validators are optional workflow extensions.
+- The repository currently contains 11 workflow definitions.
+- The current automated test suite passes with `21` tests.
