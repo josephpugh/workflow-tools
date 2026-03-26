@@ -522,6 +522,15 @@ class HashingIntelligenceService(IntelligenceService):
         top = candidates[0]
         second = candidates[1]
         if (
+            top.confidence >= 0.95
+            and top.semantic_score >= 0.95
+            and top.fuzzy_score >= 0.95
+            and top.structured_score >= 0.85
+            and (top.confidence - second.confidence) >= 0.10
+            and top.support_count >= 2
+        ):
+            return WorkflowSelectionPlan(selected_workflow_id=top.workflow.workflow_id)
+        if (
             top.confidence >= 0.72
             and (top.confidence - second.confidence) >= 0.15
             and top.support_count >= 2

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -11,6 +12,7 @@ from app.api.routes import build_router
 from app.core.config import Settings, get_settings
 from app.core.logging import setup_logging
 from app.db.repository import ConversationRepository
+from app.mcp_server import build_mcp_server
 from app.services.intelligence import HashingIntelligenceService, IntelligenceService, OpenAIIntelligenceService
 from app.services.orchestrator import ConversationOrchestrator
 from app.services.providers.registry import ProviderRegistry
@@ -62,14 +64,23 @@ def create_app(
         capability_runner=CapabilityRunner(provider_registry=provider_registry),
         current_date_provider=current_date_provider,
     )
+    mcp_server = build_mcp_server(orchestrator, log_level=resolved_settings.log_level)
+    mcp_app = mcp_server.streamable_http_app()
 
-    app = FastAPI(title=resolved_settings.app_name)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        async with mcp_server.session_manager.run():
+            yield
+
+    app = FastAPI(title=resolved_settings.app_name, lifespan=lifespan)
     app.include_router(build_router(orchestrator, registry), prefix=resolved_settings.api_prefix)
+    app.mount("/mcp", mcp_app)
     logger.info(
-        "Application initialized (workflows=%s, database=%s, log_level=%s)",
+        "Application initialized (workflows=%s, database=%s, log_level=%s, mcp_path=%s)",
         len(registry.list()),
         resolved_settings.database_url,
         resolved_settings.log_level.upper(),
+        "/mcp",
     )
     return app
 

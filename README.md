@@ -7,6 +7,7 @@ The service turns natural-language requests into a structured Intermediate Reque
 ## What is implemented
 
 - FastAPI API layer for workflow interaction, session retrieval, workflow discovery, and health checks
+- MCP server exposing a single `conversation_turn` tool over Streamable HTTP
 - Workflow Metadata Representation (WMR) catalog stored as YAML
 - Hybrid retrieval engine with:
   - semantic search using embeddings
@@ -157,6 +158,45 @@ pytest
 6. API: `ready` with the workflow and gathered inputs
 7. User: `Change effective date to 2026-05-15`
 8. API: `ready` again with an updated executable contract
+
+## MCP tool
+
+The application also mounts an MCP server at `/mcp` using the official Python MCP SDK (`mcp`).
+
+Exposed tool:
+
+- `conversation_turn`
+
+Tool behavior:
+
+- accepts `message`, optional `session_id`, and optional `context`
+- delegates to the same backend conversation orchestration used by `POST /api/v1/conversations/turn`
+- returns the full structured turn response, including disambiguation candidates, missing inputs, choices, validation state, and executable contract
+
+Example client connection:
+
+```python
+import asyncio
+
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+
+async def main():
+    async with streamable_http_client("http://127.0.0.1:8000/mcp") as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "conversation_turn",
+                {
+                    "message": "Update Dave Smith's mailing address to 117 Hayworth Drive",
+                },
+            )
+            print(result)
+
+
+asyncio.run(main())
+```
 
 ## Notes
 
