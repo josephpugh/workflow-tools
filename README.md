@@ -9,7 +9,7 @@ In practice, that means this service does not expect users to know workflow IDs,
 - Accepts natural-language user requests
 - Converts them into an Intermediate Request Representation (IRR)
 - Matches that IRR against a metadata-rich YAML workflow catalog
-- Selects a workflow or asks a disambiguating question when needed
+- Selects a workflow deterministically from matcher thresholds or asks a disambiguating question when needed
 - Extracts inputs from the conversation and from explicit context
 - Requests missing information in a calm, assistant-like tone
 - Keeps `ready` sessions editable so users can revise inputs later
@@ -25,13 +25,17 @@ In practice, that means this service does not expect users to know workflow IDs,
   - semantic matching with embeddings
   - BM25-style fuzzy retrieval
   - deterministic metadata overlap on action, domain, entity, and qualifier
+  - raw-request grounding checks to suppress irrelevant matches
   - Reciprocal Rank Fusion (RRF)
 - AI-driven orchestration for:
   - intent classification
-  - workflow selection vs disambiguation
   - input extraction
   - conversational missing-input planning
   - natural-language response generation
+- Deterministic workflow selection policy:
+  - `unsupported` when no grounded candidates remain
+  - auto-select when matcher thresholds are met
+  - disambiguation only when multiple plausible workflows remain
 - Optional capability / validator extensions for workflows
 - Demonstration capability providers for meeting scheduling:
   - suggest open slots
@@ -77,6 +81,7 @@ The repository currently includes 11 representative workflows:
 
 Primary conversation states:
 
+- `unsupported`
 - `needs_disambiguation`
 - `needs_inputs`
 - `needs_choice`
@@ -86,12 +91,13 @@ Typical flow:
 
 1. User describes an outcome in natural language.
 2. The backend classifies intent and retrieves candidate workflows.
-3. If one workflow is clearly best, it is selected. Otherwise the backend asks a clarifying question.
-4. The backend extracts known inputs from the request and any provided context.
-5. Missing information is requested in grouped, natural prompts.
-6. Optional validators or suggestion capabilities may run.
-7. Once everything required is available, the backend returns an executable contract.
-8. If the user later says something like `change effective date to 2026-05-15`, the same session can remain `ready` while updating the gathered inputs and contract.
+3. If no supported workflow is grounded strongly enough in the request, the backend returns `unsupported` instead of guessing.
+4. If one workflow is clearly best, it is selected. Otherwise the backend asks a clarifying question.
+5. The backend extracts known inputs from the request and any provided context.
+6. Missing information is requested in grouped, natural prompts.
+7. Optional validators or suggestion capabilities may run.
+8. Once everything required is available, the backend returns an executable contract.
+9. If the user later says something like `change effective date to 2026-05-15`, the same session can remain `ready` while updating the gathered inputs and contract.
 
 ## Architecture
 
@@ -109,7 +115,6 @@ Runtime responsibilities are split cleanly:
 - `OpenAIIntelligenceService`
   Handles LLM-driven reasoning:
   - IRR generation
-  - workflow selection planning
   - disambiguation wording
   - input extraction
   - missing-input planning
@@ -122,7 +127,7 @@ Runtime responsibilities are split cleanly:
 - Provider registry
   Maps declarative capability names in YAML onto backend implementations.
 
-This split keeps retrieval explainable, orchestration deterministic, and conversational reasoning prompt-driven rather than buried in per-workflow application code.
+This split keeps retrieval explainable, workflow selection deterministic, and conversational reasoning prompt-driven rather than buried in per-workflow application code.
 
 ## REST API
 
@@ -148,6 +153,7 @@ Response includes:
 - `status`
 - `assistant_message`
 - `intent`
+- no workflow candidates when `status` is `unsupported`
 - candidate workflows when relevant
 - selected workflow when relevant
 - collected inputs
@@ -227,10 +233,12 @@ When `OPENAI_API_KEY` is present, the production path uses OpenAI for:
 
 - intent classification into IRR
 - semantic embeddings for workflow matching
-- workflow selection vs clarification planning
 - workflow input extraction
 - missing-input turn planning
-- conversational assistant responses
+- disambiguation wording
+- choice and ready-state responses
+
+Workflow selection itself is deterministic in the orchestrator and is driven by matcher thresholds plus unsupported fallback handling, rather than by the LLM.
 
 Environment variables:
 
@@ -301,3 +309,7 @@ Meeting scheduling:
 3. User: `The first option works for me`
 4. API: continues gathering or returns `ready`, depending on what is still missing
 
+Unsupported request:
+
+1. User: `Book a trade for 500 dollars for .SPX for this guy`
+2. API: `unsupported` with a message explaining that no supported workflow could be identified

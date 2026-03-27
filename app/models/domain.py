@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 
 FieldType = Literal["string", "number", "date"]
-ConversationStatus = Literal["needs_disambiguation", "needs_inputs", "needs_choice", "ready"]
+ConversationStatus = Literal["unsupported", "needs_disambiguation", "needs_inputs", "needs_choice", "ready"]
 
 
 class WorkflowField(BaseModel):

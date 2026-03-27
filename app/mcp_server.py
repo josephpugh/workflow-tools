@@ -45,8 +45,8 @@ def build_mcp_server(
         instructions=(
             "Use the conversation_turn tool to submit one conversational turn to the workflow "
             "automation backend. Reuse the returned session_id on follow-up turns so the "
-            "conversation can continue across disambiguation, input collection, validation, "
-            "and ready states."
+            "conversation can continue across unsupported, disambiguation, input collection, "
+            "validation, and ready states."
         ),
         json_response=True,
         log_level=log_level.upper(),

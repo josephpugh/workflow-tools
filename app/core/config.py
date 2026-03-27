@@ -18,6 +18,7 @@ class Settings:
     workflows_dir: Path = Path(os.getenv("WORKFLOWS_DIR", "./workflows"))
     auto_select_confidence: float = float(os.getenv("AUTO_SELECT_CONFIDENCE", "0.72"))
     auto_select_margin: float = float(os.getenv("AUTO_SELECT_MARGIN", "0.15"))
+    min_grounding_overlap: int = int(os.getenv("MIN_GROUNDING_OVERLAP", "2"))
     rrf_k: int = int(os.getenv("RRF_K", "60"))
 
 

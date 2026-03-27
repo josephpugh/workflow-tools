@@ -81,14 +81,13 @@ class ConversationOrchestrator:
             intent.qualifiers,
         )
         candidates = self._matcher.match(intent)
+        if not candidates:
+            return self._return_unsupported(state, intent)
         state.candidate_workflow_ids = [candidate.workflow.workflow_id for candidate in candidates]
-        selection = self._intelligence.plan_workflow_selection(
-            candidates=candidates,
-            history=[{"role": item.role, "content": item.content} for item in state.history],
-        )
-        if selection.selected_workflow_id:
-            logger.info("Workflow auto-selected session_id=%s workflow=%s", state.session_id, selection.selected_workflow_id)
-            state.selected_workflow_id = selection.selected_workflow_id
+        if self._matcher.should_auto_select(candidates):
+            selected_workflow_id = candidates[0].workflow.workflow_id
+            logger.info("Workflow auto-selected session_id=%s workflow=%s", state.session_id, selected_workflow_id)
+            state.selected_workflow_id = selected_workflow_id
             state.candidate_workflow_ids = []
             return self._continue_input_collection(state, request.message, request.context, candidates=candidates)
 
@@ -98,7 +97,7 @@ class ConversationOrchestrator:
             state.session_id,
             [candidate.workflow.workflow_id for candidate in top_candidates],
         )
-        assistant_message = selection.assistant_message or self._intelligence.build_disambiguation_message(
+        assistant_message = self._intelligence.build_disambiguation_message(
             top_candidates,
             [{"role": item.role, "content": item.content} for item in state.history],
         )
@@ -135,13 +134,12 @@ class ConversationOrchestrator:
             merged_intent,
             restrict_to=set(state.candidate_workflow_ids),
         )
-        selection = self._intelligence.plan_workflow_selection(
-            candidates=candidates,
-            history=[{"role": item.role, "content": item.content} for item in state.history],
-        )
-        if selection.selected_workflow_id:
-            logger.info("Workflow selected after disambiguation session_id=%s workflow=%s", state.session_id, selection.selected_workflow_id)
-            state.selected_workflow_id = selection.selected_workflow_id
+        if not candidates:
+            return self._return_unsupported(state, merged_intent)
+        if self._matcher.should_auto_select(candidates):
+            selected_workflow_id = candidates[0].workflow.workflow_id
+            logger.info("Workflow selected after disambiguation session_id=%s workflow=%s", state.session_id, selected_workflow_id)
+            state.selected_workflow_id = selected_workflow_id
             state.candidate_workflow_ids = []
             return self._continue_input_collection(state, request.message, request.context, candidates=candidates)
 
@@ -150,7 +148,7 @@ class ConversationOrchestrator:
             state.session_id,
             [candidate.workflow.workflow_id for candidate in candidates[:3]],
         )
-        assistant_message = selection.assistant_message or self._intelligence.build_disambiguation_message(
+        assistant_message = self._intelligence.build_disambiguation_message(
             candidates[:3],
             [{"role": item.role, "content": item.content} for item in state.history],
         )
@@ -163,6 +161,30 @@ class ConversationOrchestrator:
             assistant_message=assistant_message,
             intent=merged_intent,
             candidate_workflows=candidates[:3],
+            collected_inputs=state.collected_inputs,
+            missing_fields=state.missing_fields,
+        )
+
+    def _return_unsupported(
+        self,
+        state: ConversationState,
+        intent: IntermediateRequestRepresentation,
+    ) -> TurnResponse:
+        assistant_message = (
+            "I’m sorry, I couldn’t identify a workflow that matches your request. "
+            "If you believe a supported workflow exists, please try rewording your request and I’ll check again."
+        )
+        state.status = "unsupported"
+        state.candidate_workflow_ids = []
+        state.selected_workflow_id = None
+        state.assistant_message = assistant_message
+        state.history.append(ConversationEvent(role="assistant", content=assistant_message))
+        return TurnResponse(
+            session_id=state.session_id,
+            status=state.status,
+            assistant_message=assistant_message,
+            intent=intent,
+            candidate_workflows=[],
             collected_inputs=state.collected_inputs,
             missing_fields=state.missing_fields,
         )

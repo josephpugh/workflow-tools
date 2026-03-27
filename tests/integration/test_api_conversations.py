@@ -141,6 +141,22 @@ def test_end_to_end_one_shot_vendor_payment(client) -> None:
     }
 
 
+def test_unsupported_request_returns_no_candidates(client) -> None:
+    response = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "message": "Book a trade for 500 dollars for .SPX for this guy",
+            "context": {"client_name": "David Smith"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unsupported"
+    assert payload["selected_workflow"] is None
+    assert payload["candidate_workflows"] == []
+    assert "couldn’t identify a workflow" in payload["assistant_message"]
+
+
 def test_end_to_end_context_prefill_and_batch_follow_up(client) -> None:
     first = client.post(
         "/api/v1/conversations/turn",

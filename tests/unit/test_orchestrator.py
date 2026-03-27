@@ -60,3 +60,34 @@ def test_orchestrator_resolves_relative_dates_from_reference_day(tmp_path: Path)
     assert response.collected_inputs["meeting_date"] == "2026-04-01"
     assert response.collected_inputs["meeting_start_time"] == "11:30"
     assert response.collected_inputs["duration_minutes"] == 45
+
+
+def test_orchestrator_auto_selects_meeting_and_prefills_client_name_from_context(tmp_path: Path) -> None:
+    orchestrator = build_orchestrator(tmp_path)
+    response = orchestrator.handle_turn(
+        TurnRequest(
+            message="Book a 60 minute meeting with this guy for next wednesday",
+            context={"client_name": "David Smith"},
+        )
+    )
+    assert response.status == "needs_choice"
+    assert response.selected_workflow is not None
+    assert response.selected_workflow.workflow_id == "book_client_meeting"
+    assert response.collected_inputs["client_name"] == "David Smith"
+    assert response.collected_inputs["meeting_date"] == "2026-04-01"
+    assert response.collected_inputs["duration_minutes"] == 60
+    assert len(response.choices) == 3
+
+
+def test_orchestrator_returns_unsupported_when_no_workflow_matches(tmp_path: Path) -> None:
+    orchestrator = build_orchestrator(tmp_path)
+    response = orchestrator.handle_turn(
+        TurnRequest(
+            message="Book a trade for 500 dollars for .SPX for this guy",
+            context={"client_name": "David Smith"},
+        )
+    )
+    assert response.status == "unsupported"
+    assert response.selected_workflow is None
+    assert response.candidate_workflows == []
+    assert "couldn’t identify a workflow" in response.assistant_message

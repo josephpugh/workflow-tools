@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 from app.core.config import Settings
 from app.models.domain import IntermediateRequestRepresentation, RankedWorkflow, WorkflowDefinition, WorkflowSummary
@@ -11,6 +11,37 @@ from app.services.intelligence import IntelligenceService
 from app.services.workflow_registry import WorkflowRegistry
 
 logger = logging.getLogger(__name__)
+
+_GROUNDING_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "help",
+    "i",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "that",
+    "the",
+    "this",
+    "to",
+    "we",
+    "with",
+    "you",
+    "your",
+}
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -78,6 +109,9 @@ class WorkflowMatcher:
         self._settings = settings
         self._workflows = registry.list()
         self._bm25 = BM25Index(self._workflows)
+        self._workflow_grounding_terms = {
+            workflow.workflow_id: self._grounding_terms(workflow.searchable_text()) for workflow in self._workflows
+        }
         self._workflow_embeddings = dict(
             zip(
                 [workflow.workflow_id for workflow in self._workflows],
@@ -119,11 +153,17 @@ class WorkflowMatcher:
         semantic_rank = self._rank(semantic_raw)
         fuzzy_rank = self._rank(fuzzy_raw)
         structured_rank = self._rank(structured_raw)
+        request_grounding_terms = self._grounding_terms(intent.raw_text)
 
-        candidates: list[RankedWorkflow] = []
+        ranked_candidates: list[tuple[RankedWorkflow, bool]] = []
         all_ids = list(semantic_raw.keys())
         for workflow_id in all_ids:
             workflow = self._registry.get(workflow_id)
+            action_match = bool(intent.action and intent.action in workflow.actions)
+            domain_match = bool(intent.domain and intent.domain == workflow.domain)
+            shared_entities = sorted(set(intent.entities).intersection(workflow.entities))
+            shared_qualifiers = sorted(set(intent.qualifiers).intersection(workflow.qualifiers))
+            grounding_terms = sorted(request_grounding_terms.intersection(self._workflow_grounding_terms[workflow_id]))
             support_count = sum(
                 1
                 for raw_scores in (semantic_raw, fuzzy_raw, structured_raw)
@@ -143,31 +183,41 @@ class WorkflowMatcher:
             )
 
             reasons = []
-            if intent.action and intent.action in workflow.actions:
+            if action_match:
                 reasons.append(f"Action match: {intent.action}")
-            if intent.domain and intent.domain == workflow.domain:
+            if domain_match:
                 reasons.append(f"Domain match: {intent.domain}")
-            shared_entities = sorted(set(intent.entities).intersection(workflow.entities))
             if shared_entities:
                 reasons.append(f"Shared entities: {', '.join(shared_entities)}")
-            shared_qualifiers = sorted(set(intent.qualifiers).intersection(workflow.qualifiers))
             if shared_qualifiers:
                 reasons.append(f"Shared qualifiers: {', '.join(shared_qualifiers)}")
+            if grounding_terms:
+                reasons.append(f"Matched request terms: {', '.join(grounding_terms)}")
 
-            candidates.append(
-                RankedWorkflow(
-                    workflow=WorkflowSummary.from_definition(workflow),
-                    rrf_score=rrf_score,
-                    confidence=round(confidence, 4),
-                    semantic_score=round(semantic.get(workflow_id, 0.0), 4),
-                    fuzzy_score=round(fuzzy.get(workflow_id, 0.0), 4),
-                    structured_score=round(structured.get(workflow_id, 0.0), 4),
-                    support_count=support_count,
-                    reasons=reasons,
+            ranked_candidates.append(
+                (
+                    RankedWorkflow(
+                        workflow=WorkflowSummary.from_definition(workflow),
+                        rrf_score=rrf_score,
+                        confidence=round(confidence, 4),
+                        semantic_score=round(semantic.get(workflow_id, 0.0), 4),
+                        fuzzy_score=round(fuzzy.get(workflow_id, 0.0), 4),
+                        structured_score=round(structured.get(workflow_id, 0.0), 4),
+                        support_count=support_count,
+                        reasons=reasons,
+                    ),
+                    self._is_grounded_candidate(
+                        action_match=action_match,
+                        domain_match=domain_match,
+                        shared_entity_count=len(shared_entities),
+                        shared_qualifier_count=len(shared_qualifiers),
+                        grounding_overlap=len(grounding_terms),
+                    ),
                 )
             )
 
-        candidates.sort(key=lambda item: (item.rrf_score, item.confidence), reverse=True)
+        ranked_candidates.sort(key=lambda item: (item[0].rrf_score, item[0].confidence), reverse=True)
+        candidates = [candidate for candidate, is_grounded in ranked_candidates if is_grounded]
         logger.info(
             "Top workflow candidates: %s",
             [
@@ -180,6 +230,29 @@ class WorkflowMatcher:
             ],
         )
         return candidates[:top_k]
+
+    @staticmethod
+    def _grounding_terms(text: str) -> set[str]:
+        return {
+            token
+            for token in re.findall(r"[a-z0-9_]+", text.lower())
+            if len(token) > 2 and not token.isdigit() and token not in _GROUNDING_STOP_WORDS
+        }
+
+    def _is_grounded_candidate(
+        self,
+        *,
+        action_match: bool,
+        domain_match: bool,
+        shared_entity_count: int,
+        shared_qualifier_count: int,
+        grounding_overlap: int,
+    ) -> bool:
+        if grounding_overlap < self._settings.min_grounding_overlap:
+            return False
+        if shared_entity_count > 0:
+            return action_match or domain_match or shared_qualifier_count > 0
+        return action_match and domain_match and shared_qualifier_count > 0
 
     def should_auto_select(self, candidates: list[RankedWorkflow]) -> bool:
         if not candidates:

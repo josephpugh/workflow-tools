@@ -241,6 +241,14 @@ Conversation:
         candidates: list[RankedWorkflow],
         history: list[dict[str, str]],
     ) -> WorkflowSelectionPlan:
+        if not candidates:
+            return WorkflowSelectionPlan(
+                selected_workflow_id=None,
+                assistant_message=(
+                    "I’m sorry, I couldn’t identify a workflow that matches your request. "
+                    "If you believe a supported workflow exists, please try rewording your request and I’ll check again."
+                ),
+            )
         prompt = f"""
 You are deciding whether a workflow can be selected confidently from retrieved candidates.
 Return JSON with:
@@ -515,7 +523,10 @@ class HashingIntelligenceService(IntelligenceService):
         if not candidates:
             return WorkflowSelectionPlan(
                 selected_workflow_id=None,
-                assistant_message="I couldn't find a suitable workflow yet. Please rephrase the request.",
+                assistant_message=(
+                    "I’m sorry, I couldn’t identify a workflow that matches your request. "
+                    "If you believe a supported workflow exists, please try rewording your request and I’ll check again."
+                ),
             )
         if len(candidates) == 1:
             return WorkflowSelectionPlan(selected_workflow_id=candidates[0].workflow.workflow_id)
