@@ -41,6 +41,28 @@ def _extract_json(text: str) -> dict[str, Any]:
         return json.loads(cleaned[start : end + 1])
 
 
+def _extract_chat_message_text(response: Any) -> str:
+    if not getattr(response, "choices", None):
+        return ""
+    message = getattr(response.choices[0], "message", None)
+    content = getattr(message, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+            else:
+                text = getattr(item, "text", None)
+            if text:
+                parts.append(str(text))
+        return "".join(parts).strip()
+    return str(content).strip()
+
+
 class IntelligenceService(ABC):
     @abstractmethod
     def classify_intent(
@@ -128,6 +150,16 @@ class OpenAIIntelligenceService(IntelligenceService):
         self._extraction_model = extraction_model
         self._embedding_model = embedding_model
 
+    def _chat_completion_text(self, model: str, prompt: str, *, json_mode: bool = False) -> str:
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if json_mode:
+            request["response_format"] = {"type": "json_object"}
+        response = self._client.chat.completions.create(**request)
+        return _extract_chat_message_text(response)
+
     def classify_intent(
         self,
         text: str,
@@ -157,8 +189,7 @@ Catalog vocabulary: {json.dumps(catalog)}
 Conversation context: {json.dumps(context)}
 User request: {text}
 """.strip()
-        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
-        payload = _extract_json(response.output_text)
+        payload = _extract_json(self._chat_completion_text(self._reasoning_model, prompt, json_mode=True))
         payload["raw_text"] = text
         return IntermediateRequestRepresentation.model_validate(payload)
 
@@ -207,8 +238,7 @@ Context:
 Conversation:
 {json.dumps(history)}
 """.strip()
-        response = self._client.responses.create(model=self._extraction_model, input=prompt)
-        return _extract_json(response.output_text)
+        return _extract_json(self._chat_completion_text(self._extraction_model, prompt, json_mode=True))
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -233,8 +263,7 @@ Candidate workflows:
 Conversation:
 {json.dumps(history)}
 """.strip()
-        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
-        return response.output_text.strip()
+        return self._chat_completion_text(self._reasoning_model, prompt)
 
     def plan_workflow_selection(
         self,
@@ -267,8 +296,7 @@ Candidates:
 Conversation:
 {json.dumps(history)}
 """.strip()
-        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
-        payload = _extract_json(response.output_text)
+        payload = _extract_json(self._chat_completion_text(self._reasoning_model, prompt, json_mode=True))
         selected_workflow_id = payload.get("selected_workflow_id")
         valid_ids = {candidate.workflow.workflow_id for candidate in candidates}
         if selected_workflow_id not in valid_ids:
@@ -320,8 +348,7 @@ First prompt after selection:
 Conversation:
 {json.dumps(history)}
 """.strip()
-        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
-        payload = _extract_json(response.output_text)
+        payload = _extract_json(self._chat_completion_text(self._reasoning_model, prompt, json_mode=True))
         requested_fields = [
             field_name for field_name in payload.get("requested_fields", []) if field_name in set(missing_fields)
         ]
@@ -356,8 +383,7 @@ Collected inputs:
 Changed fields:
 {json.dumps(changed_fields)}
         """.strip()
-        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
-        return response.output_text.strip()
+        return self._chat_completion_text(self._reasoning_model, prompt)
 
     def build_choice_message(
         self,
@@ -385,8 +411,7 @@ Validation result:
 Choices:
 {json.dumps([choice.model_dump(mode="json") for choice in choices])}
 """.strip()
-        response = self._client.responses.create(model=self._reasoning_model, input=prompt)
-        return response.output_text.strip()
+        return self._chat_completion_text(self._reasoning_model, prompt)
 
 
 class HashingIntelligenceService(IntelligenceService):
