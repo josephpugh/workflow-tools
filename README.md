@@ -4,6 +4,21 @@ FastAPI backend for an AI-powered workflow automation service. The system is bui
 
 In practice, that means this service does not expect users to know workflow IDs, field names, or rigid forms. It takes conversational requests, maps them onto a workflow catalog, asks clarifying questions when multiple workflows are plausible, pulls in any information already present in context, and continues the interaction until it has everything required to run the chosen workflow.
 
+## Executive value proposition
+
+For senior executives, the clearest way to think about this platform is as an omni-present assistant layer for workflow automation. Instead of asking employees to learn individual tools, forms, and intake processes, the firm can give them one conversational entry point that understands intent, routes demand to the right workflow, gathers the required inputs with a high-touch experience, and presents a final execution contract for confirmation.
+
+This backend is intentionally the bridge between the user and the workflow, not the system that performs the downstream operational work itself. Its value is in standardizing how work is initiated, improving the quality and completeness of workflow requests, reducing friction for front-office and service teams, and creating a more scalable control point for workflow adoption across the firm.
+
+In practical terms, that means the firm can:
+
+- offer one assistant experience across many business processes instead of one UI per workflow
+- improve employee adoption by letting users start from natural language rather than process knowledge
+- increase data quality by collecting required inputs before a workflow is launched
+- reduce operational rework caused by incomplete or misrouted requests
+- create a consistent approval moment where the user validates the execution contract and presses `Go`
+- separate the user experience layer from the downstream execution engines, allowing the firm to evolve each independently
+
 ## What this system does
 
 - Accepts natural-language user requests
