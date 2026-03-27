@@ -11,8 +11,8 @@ class Settings:
     api_prefix: str = "/api/v1"
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
-    openai_reasoning_model: str = os.getenv("OPENAI_REASONING_MODEL", "gpt-5.2")
-    openai_extraction_model: str = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5.2")
+    openai_reasoning_model: str = os.getenv("OPENAI_REASONING_MODEL", "gpt-5.4-mini")
+    openai_extraction_model: str = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5.4-mini")
     openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./workflow_automation.db")
     workflows_dir: Path = Path(os.getenv("WORKFLOWS_DIR", "./workflows"))
