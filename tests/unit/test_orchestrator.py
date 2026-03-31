@@ -91,3 +91,28 @@ def test_orchestrator_returns_unsupported_when_no_workflow_matches(tmp_path: Pat
     assert response.selected_workflow is None
     assert response.candidate_workflows == []
     assert "couldn’t identify a workflow" in response.assistant_message
+
+
+def test_orchestrator_resolves_short_disambiguation_reply_without_reclassifying(tmp_path: Path) -> None:
+    orchestrator = build_orchestrator(tmp_path)
+    first = orchestrator.handle_turn(
+        TurnRequest(
+            message="update the address for my client",
+        )
+    )
+    assert first.status == "needs_disambiguation"
+
+    def fail_classification(*args, **kwargs):
+        raise AssertionError("classify_intent should not be called for a direct disambiguation reference")
+
+    orchestrator._intelligence.classify_intent = fail_classification  # type: ignore[method-assign]
+
+    second = orchestrator.handle_turn(
+        TurnRequest(
+            session_id=first.session_id,
+            message="billing",
+        )
+    )
+    assert second.status == "needs_inputs"
+    assert second.selected_workflow is not None
+    assert second.selected_workflow.workflow_id == "update_client_billing_address"

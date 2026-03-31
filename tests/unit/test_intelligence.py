@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from app.models.domain import RankedWorkflow, WorkflowDefinition, WorkflowSummary
-from app.services.intelligence import OpenAIIntelligenceService
+from app.services.intelligence import HashingIntelligenceService, OpenAIIntelligenceService
 
 
 class FakeChatCompletions:
@@ -116,3 +116,68 @@ def test_openai_service_keeps_embeddings_on_embeddings_api() -> None:
             "input": ["alpha", "beta"],
         }
     ]
+
+
+def test_openai_service_resolves_disambiguation_turn_via_reasoning_prompt() -> None:
+    fake_client = FakeOpenAIClient(
+        chat_contents=[
+            '{"decision":"select","selected_workflow_id":"open_client_account"}',
+        ]
+    )
+    service = build_service(fake_client)
+
+    resolution = service.resolve_disambiguation_turn(
+        [build_candidate()],
+        [{"role": "assistant", "content": "Which workflow do you want?"}, {"role": "user", "content": "the first one"}],
+        "the first one",
+    )
+
+    assert resolution.decision == "select"
+    assert resolution.selected_workflow_id == "open_client_account"
+    call = fake_client.chat.completions.calls[0]
+    assert call["response_format"] == {"type": "json_object"}
+    assert "latest user message" in call["messages"][0]["content"].lower()
+
+
+def test_hashing_service_resolves_ordinal_disambiguation_reply() -> None:
+    candidate_one = build_candidate()
+    candidate_two_workflow = WorkflowDefinition(
+        workflow_id="update_client_billing_address",
+        name="Update Client Billing Address",
+        description="Update a client's billing address.",
+        domain="client_servicing",
+        entities=["client", "address"],
+        actions=["update"],
+        qualifiers=["billing"],
+    )
+    candidate_two = RankedWorkflow(
+        workflow=WorkflowSummary.from_definition(candidate_two_workflow),
+        rrf_score=0.9,
+        confidence=0.8,
+        semantic_score=0.8,
+        fuzzy_score=0.8,
+        structured_score=0.8,
+        support_count=3,
+    )
+    service = HashingIntelligenceService()
+
+    resolution = service.resolve_disambiguation_turn(
+        [candidate_one, candidate_two],
+        [{"role": "assistant", "content": "Please choose between the workflows."}],
+        "the first one",
+    )
+
+    assert resolution.decision == "select"
+    assert resolution.selected_workflow_id == "open_client_account"
+
+
+def test_hashing_service_restarts_disambiguation_for_new_request() -> None:
+    service = HashingIntelligenceService()
+
+    resolution = service.resolve_disambiguation_turn(
+        [build_candidate()],
+        [{"role": "assistant", "content": "Please choose between the workflows."}],
+        "actually I want to set up a wire transfer",
+    )
+
+    assert resolution.decision == "restart"

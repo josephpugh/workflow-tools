@@ -78,6 +78,198 @@ def test_disambiguation_preserves_original_details_in_first_needs_inputs_prompt(
     assert "postal code" in second_payload["assistant_message"].lower()
 
 
+def test_disambiguation_can_restart_matching_for_a_different_supported_workflow(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "Update David's address"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_disambiguation"
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "Neither of those. I need to close David's account instead.",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "needs_inputs"
+    assert second_payload["selected_workflow"]["workflow_id"] == "close_client_account"
+    assert second_payload["collected_inputs"]["client_name"] == "David"
+    assert set(second_payload["missing_fields"]) == {"account_number", "closure_date", "closure_reason"}
+
+
+def test_disambiguation_accepts_short_qualifier_reply_for_billing_workflow(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "update the address for my client"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_disambiguation"
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "billing",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "needs_inputs"
+    assert second_payload["selected_workflow"]["workflow_id"] == "update_client_billing_address"
+    assert set(second_payload["missing_fields"]) == {
+        "client_name",
+        "street_address",
+        "city",
+        "state",
+        "postal_code",
+        "effective_date",
+    }
+
+
+def test_disambiguation_accepts_ordinal_reply(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "update the address for my client"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_disambiguation"
+    expected_workflow_id = first_payload["candidate_workflows"][1]["workflow"]["workflow_id"]
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "the second one",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "needs_inputs"
+    assert second_payload["selected_workflow"]["workflow_id"] == expected_workflow_id
+
+
+def test_disambiguation_follow_up_does_not_consider_hidden_candidates(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "update the address for my client"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_disambiguation"
+    assert {
+        candidate["workflow"]["workflow_id"] for candidate in first_payload["candidate_workflows"][:2]
+    } == {"update_client_billing_address", "update_client_mailing_address"}
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "actually I want to set up a wire transfer, sorry",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "needs_inputs"
+    assert second_payload["selected_workflow"]["workflow_id"] == "create_wire_transfer"
+    assert set(second_payload["missing_fields"]) == {
+        "client_name",
+        "beneficiary_name",
+        "amount",
+        "transfer_date",
+        "source_account",
+    }
+
+
+def test_disambiguation_can_restart_matching_and_return_unsupported_for_a_new_request(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "Update David's address"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_disambiguation"
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "None of those. I need to register a new beneficiary instead.",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "unsupported"
+    assert second_payload["selected_workflow"] is None
+    assert second_payload["candidate_workflows"] == []
+    assert "couldn’t identify a workflow" in second_payload["assistant_message"]
+
+
+def test_needs_inputs_can_switch_workflows_and_preserve_shared_inputs(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "Update Dave Smith's mailing address to Chapel Hill, NC 27517"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_inputs"
+    assert first_payload["selected_workflow"]["workflow_id"] == "update_client_mailing_address"
+    assert first_payload["collected_inputs"]["client_name"] == "Dave Smith"
+    assert first_payload["collected_inputs"]["city"] == "Chapel Hill"
+    assert first_payload["collected_inputs"]["state"] == "NC"
+    assert first_payload["collected_inputs"]["postal_code"] == "27517"
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "Actually update the billing address instead",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "needs_inputs"
+    assert second_payload["selected_workflow"]["workflow_id"] == "update_client_billing_address"
+    assert second_payload["collected_inputs"] == {
+        "client_name": "Dave Smith",
+        "city": "Chapel Hill",
+        "state": "NC",
+        "postal_code": "27517",
+    }
+    assert set(second_payload["missing_fields"]) == {"street_address", "effective_date"}
+
+
+def test_needs_inputs_switch_probe_can_rematch_to_same_workflow_without_resetting_inputs(client) -> None:
+    first = client.post(
+        "/api/v1/conversations/turn",
+        json={"message": "Update Dave Smith's billing address to 117 Hayworth Drive"},
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["status"] == "needs_inputs"
+    assert first_payload["selected_workflow"]["workflow_id"] == "update_client_billing_address"
+
+    second = client.post(
+        "/api/v1/conversations/turn",
+        json={
+            "session_id": first_payload["session_id"],
+            "message": "Actually I want to update the billing address",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert second_payload["status"] == "needs_inputs"
+    assert second_payload["selected_workflow"]["workflow_id"] == "update_client_billing_address"
+    assert second_payload["collected_inputs"]["client_name"] == "Dave Smith"
+    assert second_payload["collected_inputs"]["street_address"] == "117 Hayworth Drive"
+
+
 def test_first_needs_inputs_prompt_mentions_partial_address_context_once(client) -> None:
     first = client.post(
         "/api/v1/conversations/turn",

@@ -125,6 +125,11 @@ class WorkflowSelectionPlan(BaseModel):
     assistant_message: str | None = None
 
 
+class DisambiguationResolutionPlan(BaseModel):
+    decision: Literal["select", "restart", "clarify"]
+    selected_workflow_id: str | None = None
+
+
 class ChoiceOption(BaseModel):
     choice_id: str
     label: str
@@ -145,6 +150,7 @@ class ConversationState(BaseModel):
     history: list[ConversationEvent] = Field(default_factory=list)
     intent: IntermediateRequestRepresentation | None = None
     candidate_workflow_ids: list[str] = Field(default_factory=list)
+    candidate_input_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     selected_workflow_id: str | None = None
     collected_inputs: dict[str, Any] = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)

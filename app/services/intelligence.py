@@ -13,6 +13,7 @@ from app.core.date_utils import extract_date_expression
 from app.models.domain import (
     AssistantTurnPlan,
     ChoiceOption,
+    DisambiguationResolutionPlan,
     IntermediateRequestRepresentation,
     RankedWorkflow,
     ValidationResult,
@@ -104,6 +105,15 @@ class IntelligenceService(ABC):
         candidates: list[RankedWorkflow],
         history: list[dict[str, str]],
     ) -> WorkflowSelectionPlan:
+        raise NotImplementedError
+
+    @abstractmethod
+    def resolve_disambiguation_turn(
+        self,
+        candidates: list[RankedWorkflow],
+        history: list[dict[str, str]],
+        latest_user_message: str,
+    ) -> DisambiguationResolutionPlan:
         raise NotImplementedError
 
     @abstractmethod
@@ -256,6 +266,7 @@ You are a calm, friendly personal assistant helping a user choose the correct wo
 Write one short professional message asking the user to choose between the candidate workflows.
 Do not use bullet points.
 Make it clear that once the user confirms, you will continue.
+If none of the options fit, tell the user they can say so and describe what they want instead.
 
 Candidate workflows:
 {json.dumps([candidate.model_dump(mode="json") for candidate in candidates])}
@@ -310,6 +321,52 @@ Conversation:
             selected_workflow_id=selected_workflow_id,
             assistant_message=assistant_message,
         )
+
+    def resolve_disambiguation_turn(
+        self,
+        candidates: list[RankedWorkflow],
+        history: list[dict[str, str]],
+        latest_user_message: str,
+    ) -> DisambiguationResolutionPlan:
+        if not candidates:
+            return DisambiguationResolutionPlan(decision="restart")
+        prompt = f"""
+You are deciding how to interpret a user's reply to a workflow disambiguation question.
+Return JSON with:
+- decision: one of "select", "restart", or "clarify"
+- selected_workflow_id: string or null
+
+Rules:
+- Use "select" when the latest user message is clearly choosing one of the candidate workflows, including shorthand references such as qualifier words, partial names, or ordinal replies like "the first one".
+- Use "restart" when the latest user message is rejecting the presented options or clearly introducing a different request.
+- Use "clarify" when the latest user message is still ambiguous between the candidate workflows.
+- selected_workflow_id must be null unless decision is "select".
+- If decision is "select", selected_workflow_id must be one of the candidate workflow IDs.
+- Base the answer on the latest user message in the context of the conversation and the candidate workflows.
+
+Latest user message:
+{json.dumps(latest_user_message)}
+
+Candidate workflows:
+{json.dumps([candidate.model_dump(mode="json") for candidate in candidates])}
+
+Conversation:
+{json.dumps(history)}
+""".strip()
+        payload = _extract_json(self._chat_completion_text(self._reasoning_model, prompt, json_mode=True))
+        decision = str(payload.get("decision", "clarify")).strip().lower()
+        if decision not in {"select", "restart", "clarify"}:
+            decision = "clarify"
+        selected_workflow_id = payload.get("selected_workflow_id")
+        valid_ids = {candidate.workflow.workflow_id for candidate in candidates}
+        if decision == "select" and selected_workflow_id in valid_ids:
+            return DisambiguationResolutionPlan(
+                decision="select",
+                selected_workflow_id=selected_workflow_id,
+            )
+        if decision == "restart":
+            return DisambiguationResolutionPlan(decision="restart")
+        return DisambiguationResolutionPlan(decision="clarify")
 
     def plan_missing_input_turn(
         self,
@@ -428,6 +485,36 @@ class HashingIntelligenceService(IntelligenceService):
         "generate": ["generate", "produce"],
         "escalate": ["escalate", "raise"],
     }
+    _DISAMBIGUATION_REJECTION_PATTERNS = (
+        "none of those",
+        "none of these",
+        "neither of those",
+        "neither of these",
+        "not one of those",
+        "not one of these",
+        "something else",
+        "different workflow",
+        "different request",
+        "don't match",
+        "do not match",
+        "doesn't match",
+        "does not match",
+    )
+    _DISAMBIGUATION_GENERIC_TOKENS = {
+        "a",
+        "an",
+        "address",
+        "client",
+        "for",
+        "one",
+        "the",
+        "this",
+        "that",
+        "to",
+        "update",
+        "use",
+        "workflow",
+    }
 
     def classify_intent(
         self,
@@ -537,7 +624,8 @@ class HashingIntelligenceService(IntelligenceService):
         )
         return (
             "I found a few likely options and wanted to confirm the right one with you: "
-            f"{options}. Once you confirm, I'll take it from there."
+            f"{options}. If none of those fit, tell me what you need instead and I'll re-check. "
+            "Once you confirm, I'll take it from there."
         )
 
     def plan_workflow_selection(
@@ -576,6 +664,87 @@ class HashingIntelligenceService(IntelligenceService):
             selected_workflow_id=None,
             assistant_message=self.build_disambiguation_message(candidates[:3], history),
         )
+
+    def resolve_disambiguation_turn(
+        self,
+        candidates: list[RankedWorkflow],
+        history: list[dict[str, str]],
+        latest_user_message: str,
+    ) -> DisambiguationResolutionPlan:
+        if not candidates:
+            return DisambiguationResolutionPlan(decision="restart")
+
+        normalized = " ".join(latest_user_message.lower().split())
+        tokens = set(re.findall(r"[a-z0-9_]+", normalized))
+
+        ordinal_patterns = {
+            0: {"first", "1st", "option 1", "choice 1", "the first one", "the first"},
+            1: {"second", "2nd", "option 2", "choice 2", "the second one", "the second"},
+            2: {"third", "3rd", "option 3", "choice 3", "the third one", "the third"},
+        }
+        for index, patterns in ordinal_patterns.items():
+            if index < len(candidates) and any(pattern in normalized for pattern in patterns):
+                return DisambiguationResolutionPlan(
+                    decision="select",
+                    selected_workflow_id=candidates[index].workflow.workflow_id,
+                )
+
+        candidate_scores: list[tuple[str, int]] = []
+        candidate_vocabulary: set[str] = set()
+        for candidate in candidates:
+            workflow = candidate.workflow
+            name_phrases = {
+                workflow.workflow_id.replace("_", " "),
+                workflow.name.lower(),
+            }
+            qualifier_phrases = {qualifier.replace("_", " ") for qualifier in workflow.qualifiers}
+            entity_phrases = {entity.replace("_", " ") for entity in workflow.entities}
+            vocabulary = {
+                token
+                for token in re.findall(r"[a-z0-9_]+", f"{workflow.workflow_id} {workflow.name}".lower().replace("_", " "))
+                if token not in self._DISAMBIGUATION_GENERIC_TOKENS
+            }
+            qualifier_tokens = {
+                token
+                for token in workflow.qualifiers
+                if token not in self._DISAMBIGUATION_GENERIC_TOKENS
+            }
+            entity_tokens = {
+                token
+                for token in workflow.entities
+                if token not in self._DISAMBIGUATION_GENERIC_TOKENS
+            }
+            vocabulary.update(qualifier_tokens)
+            vocabulary.update(entity_tokens)
+            candidate_vocabulary.update(vocabulary)
+
+            score = sum(4 for phrase in qualifier_phrases if phrase and phrase in normalized)
+            score += sum(3 for phrase in name_phrases if phrase and phrase in normalized)
+            score += sum(1 for phrase in entity_phrases if phrase and phrase in normalized)
+            score += sum(2 for token in qualifier_tokens if token.replace("_", " ") in normalized or token in tokens)
+            score += sum(2 for token in vocabulary if token in normalized and token not in qualifier_tokens)
+            score += sum(1 for token in entity_tokens if token in tokens)
+            candidate_scores.append((workflow.workflow_id, score))
+
+        candidate_scores.sort(key=lambda item: item[1], reverse=True)
+        significant_tokens = {
+            token for token in tokens if len(token) > 2 and token not in self._DISAMBIGUATION_GENERIC_TOKENS
+        }
+        unmatched_tokens = {token for token in significant_tokens if token not in candidate_vocabulary}
+
+        if candidate_scores and candidate_scores[0][1] > 0 and not unmatched_tokens:
+            if len(candidate_scores) == 1 or candidate_scores[0][1] > candidate_scores[1][1]:
+                return DisambiguationResolutionPlan(
+                    decision="select",
+                    selected_workflow_id=candidate_scores[0][0],
+                )
+
+        if any(pattern in normalized for pattern in self._DISAMBIGUATION_REJECTION_PATTERNS):
+            return DisambiguationResolutionPlan(decision="restart")
+        if unmatched_tokens:
+            return DisambiguationResolutionPlan(decision="restart")
+
+        return DisambiguationResolutionPlan(decision="clarify")
 
     def plan_missing_input_turn(
         self,
